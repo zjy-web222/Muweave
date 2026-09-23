@@ -1,0 +1,73 @@
+{
+  "name": "muweave",
+  "version": "0.1.0",
+  "description": "Muweave 幕织 — weave your story into film",
+  "author": "Muweave",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "tsc --noEmit && electron-vite build",
+    "start": "electron .",
+    "test": "vitest run",
+    "test:desktop": "node tests/desktop.mjs",
+    "package:win": "npm run build && electron-builder --win portable --x64",
+    "package:mac": "npm run build && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.8.4",
+    "fflate": "^0.8.2",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.10.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.5.0",
+    "electron": "^41.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^4.0.0",
+    "playwright": "^1.56.0",
+    "prettier": "^3.9.8",
+    "tailwindcss": "^4.1.0",
+    "typescript": "^5.9.0",
+    "vite": "^6.4.0",
+    "vitest": "^3.2.0"
+  },
+  "build": {
+    "appId": "studio.muweave.desktop",
+    "productName": "Muweave",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "src/renderer/assets/muweave-mark.png",
+        "to": "muweave-mark.png"
+      }
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "src/renderer/assets/muweave-mark.png",
+      "signAndEditExecutable": true,
+      "signExecutable": false,
+      "artifactName": "Muweave-${version}-Windows.${ext}"
+    },
+    "mac": {
+      "icon": "src/renderer/assets/muweave-mark.png",
+      "target": "dmg",
+      "category": "public.app-category.video"
+    }
+  }
+}

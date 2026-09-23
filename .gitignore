@@ -1,0 +1,11 @@
+node_modules/
+dist/
+release/
+test-results/
+*.log
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
