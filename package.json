@@ -1,6 +1,6 @@
 {
   "name": "muweave",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Muweave 幕织 — weave your story into film",
   "author": "Muweave",
   "private": true,
@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:desktop": "node tests/desktop.mjs",
     "package:win": "npm run build && electron-builder --win portable --x64",
+    "package:win:installer": "npm run build && electron-builder --win nsis --x64",
     "package:mac": "npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
@@ -63,6 +64,9 @@
       "signAndEditExecutable": true,
       "signExecutable": false,
       "artifactName": "Muweave-${version}-Windows.${ext}"
+    },
+    "nsis": {
+      "artifactName": "Muweave-${version}-Setup.${ext}"
     },
     "mac": {
       "icon": "src/renderer/assets/muweave-mark.png",

@@ -27,9 +27,9 @@ Electron + React + TypeScript + Tailwind CSS 的本地短剧工作台。界面�
 
 ## 启动
 
-Windows 免安装程序：`release/Muweave-0.1.0-Windows.exe`。
+Windows 安装版：`release/Muweave-0.1.1-Setup.exe`。免安装版：`release/Muweave-0.1.1-Windows.exe`。
 
-双击运行。该开发预览版未做代码签名，Windows 可能显示未知发布者提示；请先核对文件来源。程序不包含系统级安装、开机自启或后台常驻服务。关闭所有窗口后退出。
+安装版双击安装，免安装版双击直接运行。该开发预览版未做代码签名，Windows 可能显示未知发布者提示；请先核对文件来源。安装版按当前用户安装，程序不设置开机自启或后台常驻服务，关闭所有窗口后退出。
 
 第一次启动可选择“探索示例项目”：包含原创「雨夜来信」剧本、4 个资产、6 个镜头；示例没有虚构的生图或视频结果。
 
