@@ -1,5 +1,16 @@
 import { z } from 'zod'
-import { type Project, type Shot } from './schema'
+import { type Project, type ScriptChatTurn, type Shot } from './schema'
+
+function jsonObject(raw: string) {
+  const trimmed = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+  const start = trimmed.indexOf('{'),
+    end = trimmed.lastIndexOf('}')
+  if (start < 0 || end < start) throw new Error('未找到 JSON 对象，请复制完整的 ChatGPT 结果。')
+  return JSON.parse(trimmed.slice(start, end + 1))
+}
 
 const shotInput = z.object({
   title: z.string().max(200),
@@ -36,14 +47,37 @@ export const importSchema = z
     '请提供 script、shots 或 assets',
   )
 export function parseDirector(raw: string) {
-  const trimmed = raw
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '')
-  const start = trimmed.indexOf('{'),
-    end = trimmed.lastIndexOf('}')
-  if (start < 0 || end < start) throw new Error('未找到 JSON 对象，请复制完整的 ChatGPT 结果。')
-  return importSchema.parse(JSON.parse(trimmed.slice(start, end + 1)))
+  return importSchema.parse(jsonObject(raw))
+}
+const scriptChatReplySchema = z
+  .object({
+    reply: z.string().max(10000).default(''),
+    script: z.string().max(200000).optional(),
+  })
+  .refine((v) => !!v.reply.trim() || !!v.script?.trim(), '请提供回复或剧本')
+
+export function parseScriptChatReply(raw: string) {
+  return scriptChatReplySchema.parse(jsonObject(raw))
+}
+
+export function buildScriptChatPrompt(
+  p: Project,
+  episodeId: string,
+  request: string,
+  script: string,
+  style: string,
+) {
+  const ep = p.episodes.find((e) => e.id === episodeId)
+  if (!ep) throw new Error('集不存在')
+  const source = (script || p.source).slice(0, 30000)
+  const history = ep.scriptChat
+    .slice(-6)
+    .map(
+      (turn: ScriptChatTurn) =>
+        `${turn.role === 'user' ? '用户' : '编剧助手'}：${turn.text.slice(0, 2500)}`,
+    )
+    .join('\n')
+  return `你是影视编剧，与我逐轮讨论并打磨当前集剧本。回答本轮问题；需要创作或修改时，在 script 字段给出可直接使用的完整当前集剧本，不要只给局部片段。未要求修改剧本时将 script 设为空字符串。保留已确认的人物和情节，不要声称已经调用外部生成工具。回复语言跟随用户要求，除非用户另有指定。\n\n项目：${p.title}\n当前集：${ep.title}\n画幅：${p.aspect}\n视觉风格：${style}\n当前剧本/原始故事：\n${source}${(script || p.source).length > 30000 ? '\n（内容较长，以上仅包含前 30000 字。）' : ''}\n\n最近对话：\n${history || '（暂无）'}\n\n本轮用户要求：${request}\n\n仅返回有效 JSON，不要使用 Markdown 代码块：{"reply":"给用户的简洁回复","script":"若创作或修改了剧本，填写完整当前集剧本；否则填写空字符串"}`
 }
 export function buildPrompt(
   p: Project,

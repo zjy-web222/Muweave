@@ -1194,6 +1194,81 @@ small,
 .script-tools {
   padding: 8px 0;
 }
+.script-chat {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 16px;
+  margin-bottom: 28px;
+}
+.script-chat > .small {
+  margin: -4px 0 15px;
+}
+.script-chat-account {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 16px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.script-chat-account .button {
+  margin-left: auto;
+  padding: 5px 8px;
+  font-size: 10px;
+}
+.script-chat-history {
+  display: grid;
+  gap: 10px;
+  max-height: 285px;
+  overflow: auto;
+  margin-bottom: 16px;
+}
+.script-chat-turn {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--canvas);
+}
+.script-chat-turn.user {
+  background: var(--accent-soft);
+}
+.script-chat-turn strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.script-chat-turn p {
+  margin-top: 5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.script-chat-draft {
+  display: grid;
+  gap: 8px;
+  margin-top: 9px;
+}
+.script-chat-draft summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 10px;
+}
+.script-chat-draft pre {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 11px;
+}
+.script-chat .field {
+  margin-bottom: 10px;
+}
+.script-chat .field textarea {
+  width: 100%;
+  resize: vertical;
+}
 .note-heading {
   display: flex;
   align-items: center;

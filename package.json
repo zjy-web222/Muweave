@@ -17,6 +17,7 @@
     "package:mac": "npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
+    "@openai/codex": "^0.156.1",
     "@xyflow/react": "^12.8.4",
     "fflate": "^0.8.2",
     "lucide-react": "^0.468.0",
@@ -52,6 +53,7 @@
       "package.json"
     ],
     "asar": true,
+    "asarUnpack": ["node_modules/@openai/codex-win32-x64/vendor/**"],
     "extraResources": [
       {
         "from": "src/renderer/assets/muweave-mark.png",

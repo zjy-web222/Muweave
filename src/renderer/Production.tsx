@@ -18,6 +18,7 @@ import {
   X,
   FolderOpen,
   PencilLine,
+  MessageSquareText,
 } from 'lucide-react'
 import { type Asset, type Job, type Project, type Shot } from '../shared/schema'
 import { Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versions } from './ui'
@@ -37,17 +38,67 @@ export function ScriptEditor({
     [script, setScript] = useState(ep.script),
     [title, setTitle] = useState(ep.title),
     [style, setStyle] = useState(p.style),
-    [dirty, setDirty] = useState(false)
+    [dirty, setDirty] = useState(false),
+    [chatRequest, setChatRequest] = useState(''),
+    [chatBusy, setChatBusy] = useState(false),
+    [accountConnected, setAccountConnected] = useState<boolean | null>(null)
   useEffect(() => {
     setScript(ep.script)
     setTitle(ep.title)
     setDirty(false)
   }, [ep.id, ep.script, ep.title])
+  useEffect(() => {
+    const refresh = () => {
+      void run({ type: 'codexStatus' }).then((r) => {
+        if (r.ok) setAccountConnected(r.text === 'connected')
+      })
+    }
+    refresh()
+    window.addEventListener('director:codex-login', refresh)
+    return () => window.removeEventListener('director:codex-login', refresh)
+  }, [p.id, run])
   async function save() {
     const r = await run({ type: 'episode', projectId: p.id, episodeId, title, script })
     if (r.ok) setDirty(false)
     await run({ type: 'project', projectId: p.id, patch: { style } })
     return r.ok
+  }
+  async function sendChatRequest() {
+    const request = chatRequest.trim()
+    if (!request || chatBusy) return
+    setChatBusy(true)
+    try {
+      if (dirty && !(await save())) return
+      const generated = await run({
+        type: 'scriptChatGenerate',
+        projectId: p.id,
+        episodeId,
+        request,
+      })
+      if (generated.ok) setChatRequest('')
+    } finally {
+      setChatBusy(false)
+    }
+  }
+  async function applyChatScript(next: string) {
+    if (chatBusy) return
+    setChatBusy(true)
+    try {
+      if (dirty && !(await save())) return
+      const applied = await run({
+        type: 'episode',
+        projectId: p.id,
+        episodeId,
+        title,
+        script: next,
+      })
+      if (applied.ok) {
+        setScript(next)
+        setDirty(false)
+      }
+    } finally {
+      setChatBusy(false)
+    }
   }
   useEffect(() => {
     const handler = () => {
@@ -106,6 +157,86 @@ export function ScriptEditor({
           </div>
         </section>
         <aside className="script-tools">
+          <section className="script-chat" aria-label={t('AI 编剧对话')}>
+            <div className="note-heading">
+              <MessageSquareText size={17} />
+              <h3>{t('AI 编剧对话')}</h3>
+            </div>
+            <p className="small muted">
+              {t('在这里输入要求，AI 会直接回复。生成的候选剧本由你决定何时应用。')}
+            </p>
+            <div className="script-chat-account">
+              <span className={accountConnected ? 'green-dot' : 'neutral-dot'} />
+              <span>
+                {accountConnected === null
+                  ? t('正在检查账号…')
+                  : accountConnected
+                    ? t('ChatGPT 账号已连接')
+                    : t('需要连接 ChatGPT 账号')}
+              </span>
+              {accountConnected === false && (
+                <Button
+                  disabled={chatBusy}
+                  onClick={async () => {
+                    setChatBusy(true)
+                    try {
+                      const r = await run({ type: 'codexLogin' })
+                      if (r.ok) setAccountConnected(true)
+                    } finally {
+                      setChatBusy(false)
+                    }
+                  }}
+                >
+                  {t('连接账号')}
+                </Button>
+              )}
+            </div>
+            <div className="script-chat-history" aria-label={t('对话记录')}>
+              {ep.scriptChat.length === 0 ? (
+                <p className="small muted">{t('还没有对话。可以从人物、冲突或下一场戏开始。')}</p>
+              ) : (
+                ep.scriptChat.map((turn) => (
+                  <article className={`script-chat-turn ${turn.role}`} key={turn.id}>
+                    <strong>{turn.role === 'user' ? t('你') : t('AI 编剧')}</strong>
+                    <p>{turn.text}</p>
+                    {turn.script !== undefined && (
+                      <div className="script-chat-draft">
+                        <details>
+                          <summary>
+                            {t('查看候选剧本')} · {turn.script.length.toLocaleString()} {t('字')}
+                          </summary>
+                          <pre>{turn.script}</pre>
+                        </details>
+                        <Button
+                          disabled={chatBusy || turn.script === ep.script}
+                          onClick={() => void applyChatScript(turn.script!)}
+                        >
+                          {turn.script === ep.script ? t('已应用') : t('应用到剧本')}
+                        </Button>
+                      </div>
+                    )}
+                  </article>
+                ))
+              )}
+            </div>
+            <Field label={t('本轮创作要求')}>
+              <textarea
+                rows={3}
+                maxLength={2000}
+                value={chatRequest}
+                onChange={(e) => setChatRequest(e.target.value)}
+                placeholder={t('例如：让主角在第二场发现一个秘密，并强化结尾悬念。')}
+              />
+            </Field>
+            <Button
+              primary
+              disabled={chatBusy || !chatRequest.trim() || accountConnected !== true}
+              onClick={() => void sendChatRequest()}
+            >
+              <WandSparkles size={14} />
+              {chatBusy ? t('正在生成回复…') : t('发送给 AI 编剧')}
+            </Button>
+          </section>
           <div className="note-heading">
             <WandSparkles size={17} />
             <h3>{t('创作路线')}</h3>

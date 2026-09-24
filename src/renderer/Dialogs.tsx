@@ -1,5 +1,5 @@
 import { useT } from './i18n'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Plus,
   Trash2,
@@ -122,9 +122,10 @@ export function GenerationDialog({
   const { run, notice } = useWorkspace(),
     [prompt, setPrompt] = useState(buildPrompt(p, episodeId, kind, shot, assetId)),
     [raw, setRaw] = useState(''),
-    [step, setStep] = useState<'prompt' | 'result'>('prompt')
+    [step, setStep] = useState<'prompt' | 'result'>('prompt'),
+    [generating, setGenerating] = useState(false)
   let valid = false,
-    summary = t('粘贴 ChatGPT 输出的完整 JSON 后预览')
+    summary = t('等待生成结果或粘贴 JSON 后预览')
   if (raw.trim())
     try {
       const r = parseDirector(raw)
@@ -140,7 +141,11 @@ export function GenerationDialog({
           ? `${t('ChatGPT 生图 ·')} ${assetId ? p.assets.find((a) => a.id === assetId)?.name : slot === 'last' ? t('尾帧') : t('首帧')}`
           : t('ChatGPT 创作助手')
       }
-      subtitle={t('使用你自己的浏览器登录会话；本应用不索取 ChatGPT 密码。')}
+      subtitle={
+        kind === 'image'
+          ? t('使用你自己的浏览器登录会话；本应用不索取 ChatGPT 密码。')
+          : t('连接 ChatGPT 账号后，文字结果可直接返回软件。')
+      }
       onClose={onClose}
       wide
     >
@@ -159,11 +164,13 @@ export function GenerationDialog({
             <div className="notice">
               <ShieldCheck size={18} />
               <div>
-                {t('浏览器辅助模式')}
+                {kind === 'image' ? t('浏览器辅助模式') : t('直接生成文字')}
                 <p>
-                  {t(
-                    '提示词会复制到剪贴板，并打开独立 ChatGPT 窗口。请粘贴后发送；遇到验证时由你手动完成。不是官方第三方 OAuth / API 授权。',
-                  )}
+                  {kind === 'image'
+                    ? t(
+                        '提示词会复制到剪贴板，并打开独立 ChatGPT 窗口。请粘贴后发送；遇到验证时由你手动完成。不是官方第三方 OAuth / API 授权。',
+                      )
+                    : t('点击“在软件中直接生成”即可获得回复；浏览器辅助仍可作为备选方式。')}
                 </p>
               </div>
             </div>
@@ -240,23 +247,51 @@ export function GenerationDialog({
       <div className="modal-footer">
         <Button onClick={onClose}>{t('完成 / 关闭')}</Button>
         {step === 'prompt' ? (
-          <Button
-            primary
-            onClick={async () => {
-              const r = await run({
-                type: 'chatgpt',
-                projectId: p.id,
-                ownerId: assetId || shot?.id || episodeId,
-                kind,
-                prompt,
-                slot: assetId ? 'reference' : slot,
-              })
-              if (r.ok) setStep('result')
-            }}
-          >
-            {t('复制并打开 ChatGPT')}
-            <ArrowUpRight size={15} />
-          </Button>
+          <>
+            {kind !== 'image' && (
+              <Button
+                primary
+                disabled={generating}
+                onClick={async () => {
+                  setGenerating(true)
+                  try {
+                    const r = await run({
+                      type: 'generateText',
+                      projectId: p.id,
+                      episodeId,
+                      kind,
+                      prompt,
+                    })
+                    if (r.ok) {
+                      setRaw(r.text || '')
+                      setStep('result')
+                    }
+                  } finally {
+                    setGenerating(false)
+                  }
+                }}
+              >
+                {generating ? t('正在生成回复…') : t('在软件中直接生成')}
+              </Button>
+            )}
+            <Button
+              disabled={generating}
+              onClick={async () => {
+                const r = await run({
+                  type: 'chatgpt',
+                  projectId: p.id,
+                  ownerId: assetId || shot?.id || episodeId,
+                  kind,
+                  prompt,
+                  slot: assetId ? 'reference' : slot,
+                })
+                if (r.ok) setStep('result')
+              }}
+            >
+              {t('复制并打开 ChatGPT')}
+              <ArrowUpRight size={15} />
+            </Button>
+          </>
         ) : kind !== 'image' ? (
           <Button
             primary
@@ -283,7 +318,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     [c, setC] = useState<Config>(structuredClone(state.config)),
     [key, setKey] = useState(''),
     [output, setOutput] = useState(''),
-    [busy, setBusy] = useState(false)
+    [busy, setBusy] = useState(false),
+    [accountConnected, setAccountConnected] = useState<boolean | null>(null)
+  useEffect(() => {
+    void run({ type: 'codexStatus' }).then((r) => {
+      if (r.ok) setAccountConnected(r.text === 'connected')
+    })
+  }, [run])
   const patch = (v: Partial<Config>) => setC((o) => ({ ...o, ...v }))
   const mapping = (index: number, value: Partial<Mapping>) =>
     patch({ mappings: c.mappings.map((m, i) => (i === index ? { ...m, ...value } : m)) })
@@ -313,7 +354,43 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       <div className="modal-body settings-body">
         <section>
           <h3>
-            <ArrowUpRight size={17} /> {t('ChatGPT 浏览器')}
+            <KeyRound size={17} /> {t('ChatGPT 账号 · 文字生成')}
+          </h3>
+          <div className="row-between">
+            <div>
+              <strong>
+                {accountConnected === null
+                  ? t('正在检查账号…')
+                  : accountConnected
+                    ? t('ChatGPT 账号已连接')
+                    : t('需要连接 ChatGPT 账号')}
+              </strong>
+              <p className="small muted">
+                {t('使用 ChatGPT 账号的 Codex 授权，文字对话会直接返回软件。')}
+              </p>
+            </div>
+            <Button
+              disabled={busy || accountConnected !== false}
+              onClick={async () => {
+                setBusy(true)
+                try {
+                  const r = await run({ type: 'codexLogin' })
+                  if (r.ok) {
+                    setAccountConnected(true)
+                    window.dispatchEvent(new Event('director:codex-login'))
+                  }
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              {busy ? t('等待账号授权…') : accountConnected ? t('已连接') : t('连接账号')}
+            </Button>
+          </div>
+        </section>
+        <section>
+          <h3>
+            <ArrowUpRight size={17} /> {t('ChatGPT 浏览器 · 图片辅助')}
           </h3>
           <div className="row-between">
             <div>

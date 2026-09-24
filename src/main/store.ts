@@ -149,7 +149,9 @@ export function createProject(
     createdAt: now,
     updatedAt: now,
     revision: 0,
-    episodes: [{ id: ep, title: locale === 'en' ? 'Episode 1' : '第一集', script: '' }],
+    episodes: [
+      { id: ep, title: locale === 'en' ? 'Episode 1' : '第一集', script: '', scriptChat: [] },
+    ],
     shots: [],
     assets: [],
     media: [],
@@ -160,7 +162,7 @@ export function createProject(
     p.description = '一封迟到的信，让两个人在雨夜重新相遇。'
     p.source =
       '深夜，林舟在即将关门的咖啡馆收到一封没有寄件人的信。信里只有一句话：如果你还记得，今晚十一点，老车站见。她穿过雨中的城市，在车站看到多年未见的陈默。'
-    p.episodes[0] = { id: ep, title: '01 · 一封迟到的信', script: p.source }
+    p.episodes[0] = { id: ep, title: '01 · 一封迟到的信', script: p.source, scriptChat: [] }
     p.assets = [
       {
         id: randomUUID(),

@@ -48,6 +48,35 @@ try {
   await page.getByRole('button', { name: '保存剧本', exact: true }).click()
   await page.getByRole('button', { name: '已保存', exact: true }).waitFor()
   await page.screenshot({ path: join(evidence, '03-script-editor.png') })
+  await page.getByLabel('本轮创作要求').fill('把结尾改成悬念。')
+  await page.getByRole('button', { name: '发送给 AI 编剧' }).waitFor()
+  const append = async (role, text, script) =>
+    page.evaluate(
+      async ({ projectId, episodeId, role, text, script }) =>
+        window.director.command({
+          type: 'scriptChat',
+          projectId,
+          episodeId,
+          turn: {
+            id: crypto.randomUUID(),
+            role,
+            text,
+            ...(script ? { script } : {}),
+            createdAt: new Date().toISOString(),
+          },
+        }),
+      { projectId: project.id, episodeId: project.episodes[0].id, role, text, script },
+    )
+  assert((await append('user', '把结尾改成悬念。')).ok)
+  assert((await append('assistant', '已加强悬念。', '新版悬念剧本。')).ok)
+  await page.getByLabel('对话记录').getByText('把结尾改成悬念。', { exact: true }).waitFor()
+  await page.getByText('已加强悬念。').waitFor()
+  await page.getByRole('button', { name: '应用到剧本' }).click()
+  assert.equal(await page.getByLabel('剧本正文').inputValue(), '新版悬念剧本。')
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects[0].episodes[0].script, '新版悬念剧本。')
+  assert.equal(snapshot.state.projects[0].episodes[0].scriptChat.length, 2)
+  await page.locator('.script-chat').screenshot({ path: join(evidence, '03-script-chat.png') })
   await page.getByRole('button', { name: '资产库 02' }).click()
   await page.getByRole('heading', { name: '让每次生成，都属于同一个世界。' }).waitFor()
   await page.screenshot({ path: join(evidence, '04-assets.png') })
@@ -153,6 +182,10 @@ try {
   assert.equal(
     snapshot.state.projects.find((p) => p.id === project.id).shots[0].title,
     '桌面测试 · 已保存的镜头',
+  )
+  assert.equal(
+    snapshot.state.projects.find((p) => p.id === project.id).episodes[0].scriptChat.length,
+    2,
   )
   assert.equal(snapshot.state.config.theme, 'light')
   assert.equal(snapshot.state.config.locale, 'en')

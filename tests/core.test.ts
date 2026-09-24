@@ -5,10 +5,23 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { zipSync, strToU8 } from 'fflate'
 import { Store, createProject, inside } from '../src/main/store'
+import { codexFinalMessage } from '../src/main/codex'
 import { exportArchive, restoreArchive, importMedia, Exporter } from '../src/main/media'
-import { parseDirector, toSrt, escapeHtml } from '../src/shared/director'
+import {
+  buildScriptChatPrompt,
+  parseDirector,
+  parseScriptChatReply,
+  toSrt,
+  escapeHtml,
+} from '../src/shared/director'
 import { Queue, RunningHub, RejectedRequest, inputsChanged } from '../src/main/runninghub'
-import { blankShot, commandSchema, defaultConfig, type Job } from '../src/shared/schema'
+import {
+  blankShot,
+  commandSchema,
+  defaultConfig,
+  projectSchema,
+  type Job,
+} from '../src/shared/schema'
 
 let root: string, store: Store
 beforeEach(async () => {
@@ -64,6 +77,49 @@ describe('local project state', () => {
     expect(() => parseDirector('{"shots":[{"title":"x","duration":999}]}')).toThrow()
     expect(toSrt(p.shots)).toContain('00:00:06,000 --> 00:00:11,000')
     expect(escapeHtml('<script>')).toBe('&lt;script&gt;')
+  })
+  it('keeps legacy episodes compatible and validates multi-turn script replies', () => {
+    const p = createProject('A', '16:9')
+    const legacy = { ...p, episodes: [{ id: p.episodes[0].id, title: '第一集', script: '旧剧本' }] }
+    const loaded = projectSchema.parse(legacy)
+    expect(loaded.episodes[0].scriptChat).toEqual([])
+    loaded.episodes[0].scriptChat.push({
+      id: 'turn_1',
+      role: 'user',
+      text: '增强冲突',
+      createdAt: '2026-01-01',
+    })
+    const prompt = buildScriptChatPrompt(
+      loaded,
+      loaded.episodes[0].id,
+      '修改结尾',
+      '当前剧本',
+      '写实',
+    )
+    expect(prompt).toContain('用户：增强冲突')
+    expect(prompt).toContain('本轮用户要求：修改结尾')
+    expect(prompt).toContain('当前剧本')
+    expect(parseScriptChatReply('```json\n{"reply":"已调整","script":"新版剧本"}\n```')).toEqual({
+      reply: '已调整',
+      script: '新版剧本',
+    })
+    expect(() => parseScriptChatReply('{"reply":""}')).toThrow()
+    expect(
+      codexFinalMessage(
+        [
+          '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"reply\\":\\"初稿\\"}"}}',
+          '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"reply\\":\\"最终版\\"}"}}',
+        ].join('\n'),
+      ),
+    ).toBe('{"reply":"最终版"}')
+    expect(() =>
+      commandSchema.parse({
+        type: 'scriptChatGenerate',
+        projectId: p.id,
+        episodeId: p.episodes[0].id,
+        request: '',
+      }),
+    ).toThrow()
   })
   it('archives current state and every media version without credentials', async () => {
     const p = store.save(createProject('archive', '16:9', true)),

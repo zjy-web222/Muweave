@@ -46,6 +46,14 @@ export const shotSchema = z.object({
   stale: z.boolean().default(false),
 })
 export type Shot = z.infer<typeof shotSchema>
+export const scriptChatTurnSchema = z.object({
+  id,
+  role: z.enum(['user', 'assistant']),
+  text: z.string().min(1).max(10000),
+  script: text.optional(),
+  createdAt: z.string(),
+})
+export type ScriptChatTurn = z.infer<typeof scriptChatTurnSchema>
 export const projectSchema = z.object({
   id,
   title: z.string().min(1).max(200),
@@ -56,7 +64,16 @@ export const projectSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   revision: z.number().int().min(0),
-  episodes: z.array(z.object({ id, title: z.string().max(200), script: text })).max(200),
+  episodes: z
+    .array(
+      z.object({
+        id,
+        title: z.string().max(200),
+        script: text,
+        scriptChat: z.array(scriptChatTurnSchema).max(40).default([]),
+      }),
+    )
+    .max(200),
   shots: z.array(shotSchema).max(2000),
   assets: z.array(assetSchema).max(1000),
   media: z.array(mediaSchema).max(10000),
@@ -172,6 +189,22 @@ export const commandSchema = z.discriminatedUnion('type', [
     episodeId: id.optional(),
     title: z.string().max(200),
     script: text,
+  }),
+  z.object({ type: z.literal('scriptChat'), ...pid, episodeId: id, turn: scriptChatTurnSchema }),
+  z.object({
+    type: z.literal('scriptChatGenerate'),
+    ...pid,
+    episodeId: id,
+    request: z.string().min(1).max(2000),
+  }),
+  z.object({ type: z.literal('codexStatus') }),
+  z.object({ type: z.literal('codexLogin') }),
+  z.object({
+    type: z.literal('generateText'),
+    ...pid,
+    episodeId: id,
+    kind: z.enum(['script', 'assets', 'storyboard']),
+    prompt: text,
   }),
   z.object({ type: z.literal('shot'), ...pid, shot: shotSchema }),
   z.object({ type: z.literal('deleteShot'), ...pid, shotId: id }),

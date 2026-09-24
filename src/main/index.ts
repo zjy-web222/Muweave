@@ -22,9 +22,15 @@ import {
   type Reply,
   type Snapshot,
 } from '../shared/schema'
-import { parseDirector } from '../shared/director'
+import {
+  buildPrompt,
+  buildScriptChatPrompt,
+  parseDirector,
+  parseScriptChatReply,
+} from '../shared/director'
 import { Store, createProject } from './store'
 import { ChatGPT } from './chatgpt'
+import { CodexText } from './codex'
 import { Queue, RunningHub, inputsChanged } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter } from './media'
 
@@ -38,7 +44,8 @@ const here = fileURLToPath(new URL('.', import.meta.url))
 let window: BrowserWindow | null = null,
   store: Store,
   queue: Queue,
-  chatgpt: ChatGPT
+  chatgpt: ChatGPT,
+  codex: CodexText
 const exporter = new Exporter()
 if (process.env.DIRECTOR_DATA_DIR) app.setPath('userData', process.env.DIRECTOR_DATA_DIR)
 const primary = app.requestSingleInstanceLock()
@@ -120,6 +127,7 @@ if (primary)
   void app.whenReady().then(() => {
     store = new Store(join(app.getPath('userData'), 'library'))
     chatgpt = new ChatGPT(store, changed)
+    codex = new CodexText(store)
     const api = new RunningHub(key)
     queue = new Queue(store, api, changed)
     protocol.handle('media', async (request) => {
@@ -165,9 +173,65 @@ if (primary)
               const ep = c.episodeId ? p.episodes.find((e) => e.id === c.episodeId) : undefined
               if (c.episodeId && !ep) throw new Error('集不存在')
               if (ep) Object.assign(ep, { title: c.title, script: c.script })
-              else p.episodes.push({ id: randomUUID(), title: c.title, script: c.script })
+              else
+                p.episodes.push({
+                  id: randomUUID(),
+                  title: c.title,
+                  script: c.script,
+                  scriptChat: [],
+                })
             })
             break
+          case 'scriptChat':
+            store.update(c.projectId, (p) => {
+              const ep = p.episodes.find((e) => e.id === c.episodeId)
+              if (!ep) throw new Error('集不存在')
+              ep.scriptChat = [...ep.scriptChat, c.turn].slice(-40)
+            })
+            break
+          case 'scriptChatGenerate': {
+            const p = store.project(c.projectId)
+            const ep = p.episodes.find((e) => e.id === c.episodeId)
+            if (!ep) throw new Error('集不存在')
+            const prompt = buildScriptChatPrompt(p, c.episodeId, c.request, ep.script, p.style)
+            const rawReply = await codex.generate(prompt, {
+              type: 'object',
+              properties: { reply: { type: 'string' }, script: { type: 'string' } },
+              required: ['reply', 'script'],
+              additionalProperties: false,
+            })
+            const reply = parseScriptChatReply(rawReply)
+            const now = new Date().toISOString()
+            store.update(c.projectId, (current) => {
+              const target = current.episodes.find((e) => e.id === c.episodeId)
+              if (!target) throw new Error('集不存在')
+              target.scriptChat = [
+                ...target.scriptChat,
+                { id: randomUUID(), role: 'user' as const, text: c.request, createdAt: now },
+                {
+                  id: randomUUID(),
+                  role: 'assistant' as const,
+                  text: reply.reply.trim() || '已生成剧本草稿',
+                  script: reply.script?.trim() ? reply.script : undefined,
+                  createdAt: now,
+                },
+              ].slice(-40)
+            })
+            break
+          }
+          case 'codexStatus':
+            text = (await codex.connected()) ? 'connected' : 'disconnected'
+            break
+          case 'codexLogin':
+            await codex.login()
+            message = 'ChatGPT 账号已连接，可在软件中直接生成文本。'
+            break
+          case 'generateText': {
+            const p = store.project(c.projectId)
+            if (!p.episodes.some((e) => e.id === c.episodeId)) throw new Error('集不存在')
+            text = await codex.generate(c.prompt || buildPrompt(p, c.episodeId, c.kind))
+            break
+          }
           case 'shot':
             store.update(c.projectId, (p) => {
               if (!p.episodes.some((e) => e.id === c.shot.episodeId)) throw new Error('集不存在')
