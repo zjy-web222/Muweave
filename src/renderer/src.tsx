@@ -234,20 +234,47 @@ function App() {
             </div>
             <nav className="project-nav">
               {state.projects.map((project) => (
-                <button
-                  key={project.id}
-                  className={p?.id === project.id ? 'active' : ''}
-                  onClick={async () => {
-                    if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current()))
-                      return
-                    setPid(project.id)
-                    setEpid('')
-                  }}
-                >
-                  <FolderOpen size={16} />
-                  <span>{project.title}</span>
-                  {p?.id === project.id && <span className="active-dot" />}
-                </button>
+                <div key={project.id} className={`nav-node ${p?.id === project.id ? 'active' : ''}`}>
+                  <button
+                    className="nav-select"
+                    onClick={async () => {
+                      if (project.id === p?.id) return
+                      if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current()))
+                        return
+                      setPid(project.id)
+                      setEpid('')
+                    }}
+                  >
+                    <FolderOpen size={16} />
+                    <span>{project.title}</span>
+                  </button>
+                  <button
+                    className="nav-remove"
+                    aria-label={`${t('移除项目')} ${project.title}`}
+                    title={`${t('移除项目')} ${project.title}`}
+                    onClick={() =>
+                      setConfirm({
+                        title: `${t('备份并移除项目')}「${project.title}」？`,
+                        text: t(
+                          '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。',
+                        ),
+                        run: async () => {
+                          const r = await run({ type: 'deleteProject', projectId: project.id })
+                          if (
+                            r.ok &&
+                            p?.id === project.id &&
+                            !r.state.projects.some((item) => item.id === project.id)
+                          ) {
+                            setPid(r.state.projects[0]?.id || '')
+                            setEpid('')
+                          }
+                        },
+                      })
+                    }
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               ))}
               {!state.projects.length && <p className="small muted">{t('还没有项目')}</p>}
             </nav>
@@ -272,14 +299,45 @@ function App() {
                 </div>
                 <nav className="episode-nav">
                   {p.episodes.map((ep, i) => (
-                    <button
-                      className={ep.id === episodeId ? 'active' : ''}
-                      key={ep.id}
-                      onClick={() => void changeEpisode(ep.id)}
-                    >
-                      <span className="mono">{String(i + 1).padStart(2, '0')}</span>
-                      <span>{ep.title}</span>
-                    </button>
+                    <div key={ep.id} className={`nav-node ${ep.id === episodeId ? 'active' : ''}`}>
+                      <button className="nav-select" onClick={() => void changeEpisode(ep.id)}>
+                        <span className="mono">{String(i + 1).padStart(2, '0')}</span>
+                        <span>{ep.title}</span>
+                      </button>
+                      <button
+                        className="nav-remove"
+                        aria-label={`${t('移除分集')} ${ep.title}`}
+                        title={`${t('移除分集')} ${ep.title}`}
+                        disabled={p.episodes.length === 1}
+                        onClick={() =>
+                          setConfirm({
+                            title: `${t('移除分集')}「${ep.title}」？`,
+                            text: t(
+                              '此集的剧本、对话与镜头会从项目中移除；素材文件和历史版本仍保留。',
+                            ),
+                            run: async () => {
+                              if (
+                                ep.id === episodeId &&
+                                beforeEpisodeChange.current &&
+                                !(await beforeEpisodeChange.current())
+                              )
+                                return
+                              const r = await run({
+                                type: 'deleteEpisode',
+                                projectId: p.id,
+                                episodeId: ep.id,
+                              })
+                              if (r.ok && ep.id === episodeId) {
+                                const remaining = r.state.projects.find((item) => item.id === p.id)
+                                setEpid(remaining?.episodes[Math.min(i, remaining.episodes.length - 1)]?.id || '')
+                              }
+                            },
+                          })
+                        }
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   ))}
                 </nav>
                 <div className="project-note">
@@ -288,27 +346,6 @@ function App() {
                   <span className="small muted">
                     {p.aspect} · {p.shots.length} {t('镜头')}
                   </span>
-                  <button
-                    className="remove-project"
-                    onClick={() =>
-                      setConfirm({
-                        title: `${t('备份并移除项目')}「${p.title}」？`,
-                        text: t(
-                          '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。',
-                        ),
-                        run: async () => {
-                          const r = await run({ type: 'deleteProject', projectId: p.id })
-                          if (r.ok && !r.state.projects.some((item) => item.id === p.id)) {
-                            setPid(r.state.projects[0]?.id || '')
-                            setEpid('')
-                          }
-                        },
-                      })
-                    }
-                  >
-                    <Trash2 size={13} />
-                    {t('备份并移除项目')}
-                  </button>
                 </div>
               </>
             )}

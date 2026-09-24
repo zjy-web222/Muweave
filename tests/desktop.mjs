@@ -43,6 +43,13 @@ try {
   const project = snapshot.state.projects[0],
     shot = project.shots[0]
   assert.equal(shot.title, '桌面测试 · 已保存的镜头')
+  const soleEpisodeRemoval = await page.evaluate(
+    ({ projectId, episodeId }) =>
+      window.director.command({ type: 'deleteEpisode', projectId, episodeId }),
+    { projectId: project.id, episodeId: project.episodes[0].id },
+  )
+  assert.equal(soleEpisodeRemoval.ok, false)
+  assert.match(soleEpisodeRemoval.error, /至少需要保留一集/)
   await page.getByRole('button', { name: '剧本 01' }).click()
   const accountStatus = await page.evaluate(() => window.director.command({ type: 'codexStatus' }))
   assert(accountStatus.ok, accountStatus.error)
@@ -106,6 +113,21 @@ try {
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   const secondEpisode = snapshot.state.projects[0].episodes[1]
   assert.equal(secondEpisode.script, '第二集未手动保存的草稿。')
+  await page.getByRole('button', { name: '添加分集' }).click()
+  await page.getByLabel('集名称').fill('临时第三集')
+  await page.getByRole('button', { name: '创建分集' }).click()
+  await page.getByLabel('剧本正文').fill('准备移除的草稿。')
+  await page.locator('.episode-nav').getByRole('button', { name: '移除分集 临时第三集' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'hidden' })
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="剧本正文"]')?.value === '第二集未手动保存的草稿。',
+  )
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects[0].episodes.length, 2)
+  assert.equal(snapshot.state.projects[0].episodes[1].id, secondEpisode.id)
+  assert.equal(await page.locator('.project-note .nav-remove').count(), 0)
+  await page.locator('.sidebar').screenshot({ path: join(evidence, '03-sidebar-node-removal.png') })
   assert((await append('user', '第二集问题', undefined, secondEpisode.id)).ok)
   assert(
     (
@@ -201,8 +223,8 @@ try {
   await app.evaluate(({ dialog }) => {
     dialog.showSaveDialog = async () => ({ canceled: true })
   })
-  await page.locator('.project-nav').getByRole('button', { name: restoredProject.title }).click()
-  await page.getByRole('button', { name: '备份并移除项目' }).click()
+  await page.locator('.project-nav').getByRole('button', { name: restoredProject.title, exact: true }).click()
+  await page.locator('.project-nav').getByRole('button', { name: `移除项目 ${restoredProject.title}` }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
@@ -211,7 +233,7 @@ try {
   await app.evaluate(({ dialog }, file) => {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })
   }, removedArchive)
-  await page.getByRole('button', { name: '备份并移除项目' }).click()
+  await page.locator('.project-nav').getByRole('button', { name: `移除项目 ${restoredProject.title}` }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))

@@ -16,6 +16,10 @@ export const en: Record<string, string> = {
   工作空间: 'Workspace',
   还没有项目: 'No projects yet',
   备份并移除项目: 'Back up and remove project',
+  移除项目: 'Remove project',
+  移除分集: 'Remove episode',
+  '此集的剧本、对话与镜头会从项目中移除；素材文件和历史版本仍保留。':
+    'This episode’s script, conversations, and shots will be removed from the project. Media files and version history remain.',
   '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。':
     'Choose where to save a ZIP backup. The project will then be removed from the list; original media files remain. Canceling the save keeps the project.',
   '开发版界面与主进程版本不一致，请重启应用后重试。':

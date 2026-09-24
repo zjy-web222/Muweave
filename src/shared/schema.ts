@@ -203,6 +203,7 @@ export const commandSchema = z.discriminatedUnion('type', [
     title: z.string().max(200),
     script: text,
   }),
+  z.object({ type: z.literal('deleteEpisode'), ...pid, episodeId: id }),
   z.object({ type: z.literal('scriptChat'), ...pid, episodeId: id, turn: scriptChatTurnSchema }),
   z.object({
     type: z.literal('scriptChatPickFiles'),

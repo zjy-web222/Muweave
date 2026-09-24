@@ -400,49 +400,76 @@ small,
   max-height: 24vh;
   overflow: auto;
 }
-.project-nav > button,
-.episode-nav > button {
+.nav-node {
+  display: flex;
+  align-items: center;
+  border-radius: 7px;
+  min-height: 37px;
+  min-width: 0;
+}
+.nav-node .nav-select {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-radius: 7px;
-  padding: 10px 11px;
+  flex: 1;
+  min-width: 0;
   min-height: 37px;
+  padding: 10px 11px;
   text-align: left;
   font-size: 12px;
   color: var(--muted);
 }
-.project-nav button > span:nth-child(2),
-.episode-nav button > span:nth-child(2) {
+.nav-node .nav-select > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.project-nav button .active-dot {
-  margin-left: auto;
+.nav-node .nav-select > svg {
+  flex: none;
 }
-.project-nav button:hover,
-.episode-nav button:hover {
+.nav-node:hover {
   background: var(--hover);
 }
-.project-nav button.active {
+.project-nav .nav-node.active {
   background: var(--panel);
   color: var(--text);
   box-shadow: 0 1px 3px #00000006;
+}
+.nav-node.active .nav-select {
+  color: var(--text);
+}
+.nav-node .nav-remove {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin-right: 3px;
+  border-radius: 6px;
+  color: var(--faint);
+}
+.nav-node .nav-remove:hover,
+.nav-node .nav-remove:focus-visible {
+  background: var(--hover);
+  color: var(--danger);
+}
+.nav-node .nav-remove:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
 }
 .episode-label {
   margin-top: 23px;
   margin-bottom: 4px;
 }
-.episode-nav button {
+.episode-nav .nav-select {
   font-size: 11px;
   padding-left: 12px;
 }
-.episode-nav button .mono {
+.episode-nav .nav-select .mono {
   font-size: 10px;
   color: var(--faint);
 }
-.episode-nav button.active {
+.episode-nav .nav-node.active {
   background: var(--hover);
   color: var(--text);
 }
@@ -463,18 +490,6 @@ small,
 }
 .project-note .small {
   font-size: 10px;
-}
-.remove-project {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 17px;
-  padding: 6px 0;
-  font-size: 11px;
-  color: var(--muted);
-}
-.remove-project:hover {
-  color: var(--danger);
 }
 .sidebar-bottom {
   margin-top: auto;

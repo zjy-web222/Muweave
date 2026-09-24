@@ -189,6 +189,35 @@ if (primary)
                 })
             })
             break
+          case 'deleteEpisode': {
+            const project = store.project(c.projectId)
+            if (!project.episodes.some((ep) => ep.id === c.episodeId)) throw new Error('集不存在')
+            if (project.episodes.length === 1) throw new Error('项目至少需要保留一集')
+            const shotIds = new Set(
+              project.shots.filter((shot) => shot.episodeId === c.episodeId).map((shot) => shot.id),
+            )
+            if (
+              store.jobs().some(
+                (job) =>
+                  job.projectId === c.projectId &&
+                  job.shotId &&
+                  shotIds.has(job.shotId) &&
+                  ['queued', 'running', 'submitting', 'downloading', 'paused', 'uncertain'].includes(
+                    job.status,
+                  ),
+              )
+            )
+              throw new Error('请先处理此集镜头的未完成任务')
+            store.update(c.projectId, (p) => {
+              p.episodes = p.episodes.filter((ep) => ep.id !== c.episodeId)
+              p.shots = p.shots.filter((shot) => shot.episodeId !== c.episodeId)
+              for (const group of p.groups)
+                group.shotIds = group.shotIds.filter((id) => !shotIds.has(id))
+              for (const id of shotIds) delete p.layout[id]
+            })
+            message = '已移除分集，素材文件和历史版本仍保留'
+            break
+          }
           case 'scriptChat':
             store.update(c.projectId, (p) => {
               const ep = p.episodes.find((e) => e.id === c.episodeId)
