@@ -279,6 +279,23 @@ export const en: Record<string, string> = {
   已保存到本机: 'Saved on this computer',
   保存: 'Save',
   '每个镜头，始于一个好故事。': 'Every shot starts with a good story.',
+  '左侧编辑当前集，右侧与 AI 讨论整个项目。':
+    'Edit the current episode on the left. Discuss the whole project with AI on the right.',
+  上一集: 'Previous episode',
+  下一集: 'Next episode',
+  条项目对话: 'project messages',
+  '这里显示当前项目所有分集的对话。生成的剧本可直接放入对应集。':
+    'Conversations from every episode in this project appear here. Apply a draft to its episode in one click.',
+  创作思路摘要: 'Creative approach',
+  已应用到剧本: 'Applied to script',
+  'AI 正在分析并生成回复…': 'AI is analyzing and writing a reply…',
+  发送到当前集: 'Message for current episode',
+  '提出要求，或添加文件让 AI 分析。Ctrl+Enter 发送。':
+    'Ask for a change, or attach a file for AI to analyze. Ctrl+Enter to send.',
+  添加文件: 'Attach files',
+  移除附件: 'Remove attachment',
+  '可选任意类型文件，每轮最多 10 个、单个 50 MB。无法解析的格式会在回复中说明。':
+    'Choose any file type, up to 10 files per turn and 50 MB each. The reply will say when a format cannot be read.',
   '导入故事，让 ChatGPT 帮你构建剧本、资产和分镜。':
     'Import a story and use ChatGPT to develop the script, assets, and storyboard.',
   '导入 TXT / MD / DOCX': 'Import TXT / MD / DOCX',

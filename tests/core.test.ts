@@ -1,11 +1,12 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
-import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { zipSync, strToU8 } from 'fflate'
 import { Store, createProject, inside } from '../src/main/store'
 import { codexFinalMessage } from '../src/main/codex'
+import { prepareChatFile } from '../src/main/chat-files'
 import { exportArchive, restoreArchive, importMedia, Exporter } from '../src/main/media'
 import {
   buildScriptChatPrompt,
@@ -99,6 +100,11 @@ describe('local project state', () => {
     expect(prompt).toContain('用户：增强冲突')
     expect(prompt).toContain('本轮用户要求：修改结尾')
     expect(prompt).toContain('当前剧本')
+    expect(
+      buildScriptChatPrompt(loaded, loaded.episodes[0].id, '', '', '写实', [
+        { name: 'reference.unknown', content: '测试代号：7319', size: 12 },
+      ]),
+    ).toContain('测试代号：7319')
     expect(parseScriptChatReply('```json\n{"reply":"已调整","script":"新版剧本"}\n```')).toEqual({
       reply: '已调整',
       script: '新版剧本',
@@ -112,14 +118,53 @@ describe('local project state', () => {
         ].join('\n'),
       ),
     ).toBe('{"reply":"最终版"}')
-    expect(() =>
+    expect(
       commandSchema.parse({
         type: 'scriptChatGenerate',
         projectId: p.id,
         episodeId: p.episodes[0].id,
         request: '',
       }),
+    ).toMatchObject({ attachmentIds: [] })
+    expect(() =>
+      commandSchema.parse({
+        type: 'scriptChatGenerate',
+        projectId: p.id,
+        episodeId: p.episodes[0].id,
+        request: '',
+        attachmentIds: Array.from({ length: 11 }, (_, index) => `file_${index}`),
+      }),
     ).toThrow()
+  })
+  it('extracts text from arbitrary file extensions before AI analysis', async () => {
+    const file = join(root, 'reference.unknown')
+    await writeFile(file, '测试代号：蓝鲸-7319。')
+    const prepared = await prepareChatFile(file, 'reference.unknown', (await readFile(file)).length)
+    expect(prepared.content).toContain('蓝鲸-7319')
+  })
+  it('extracts text from a PDF attachment', async () => {
+    const parts = ['%PDF-1.4\n']
+    const offsets: number[] = []
+    const object = (body: string) => {
+      offsets.push(Buffer.byteLength(parts.join('')))
+      parts.push(`${offsets.length} 0 obj\n${body}\nendobj\n`)
+    }
+    const stream = 'BT /F1 12 Tf 72 720 Td (PDF_CODE_7319) Tj ET'
+    object('<< /Type /Catalog /Pages 2 0 R >>')
+    object('<< /Type /Pages /Kids [3 0 R] /Count 1 >>')
+    object(
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    )
+    object(`<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`)
+    object('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+    const xref = Buffer.byteLength(parts.join(''))
+    parts.push('xref\n0 6\n0000000000 65535 f \n')
+    for (const offset of offsets) parts.push(`${String(offset).padStart(10, '0')} 00000 n \n`)
+    parts.push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`)
+    const file = join(root, 'reference.pdf')
+    await writeFile(file, parts.join(''))
+    const prepared = await prepareChatFile(file, 'reference.pdf', (await readFile(file)).length)
+    expect(prepared.content).toContain('PDF_CODE_7319')
   })
   it('archives current state and every media version without credentials', async () => {
     const p = store.save(createProject('archive', '16:9', true)),
@@ -133,6 +178,19 @@ describe('local project state', () => {
     )
     await importMedia(store, p.id, p.shots[0].id, 'first', file)
     await importMedia(store, p.id, p.shots[0].id, 'first', file)
+    await mkdir(store.file(p.id, 'chat'), { recursive: true })
+    await writeFile(store.file(p.id, 'chat/reference_1'), 'file content')
+    store.update(p.id, (project) => {
+      project.episodes[0].scriptChat.push({
+        id: 'turn_with_file',
+        role: 'user',
+        text: '分析附件',
+        attachments: [
+          { id: 'reference_1', name: 'reference.xyz', size: 12, file: 'chat/reference_1' },
+        ],
+        createdAt: '2026-01-01',
+      })
+    })
     store.set('runninghub-key', 'secret-not-for-archive')
     const target = join(root, 'project.zip')
     await exportArchive(store, p.id, target)
@@ -140,6 +198,8 @@ describe('local project state', () => {
     const copy = await restoreArchive(store, target)
     expect(copy.id).not.toBe(p.id)
     expect(copy.media).toHaveLength(2)
+    expect(copy.episodes[0].scriptChat[0].attachments?.[0].name).toBe('reference.xyz')
+    expect(await readFile(store.file(copy.id, 'chat/reference_1'), 'utf8')).toBe('file content')
     expect(copy.shots[0].firstMediaId).toBe(copy.media[1].id)
     expect(store.jobs()).toHaveLength(0)
   })

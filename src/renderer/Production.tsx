@@ -1,5 +1,5 @@
 import { useT } from './i18n'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import {
   Plus,
   Upload,
@@ -19,6 +19,9 @@ import {
   FolderOpen,
   PencilLine,
   MessageSquareText,
+  ChevronLeft,
+  ChevronRight,
+  Paperclip,
 } from 'lucide-react'
 import { type Asset, type Job, type Project, type Shot } from '../shared/schema'
 import { Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versions } from './ui'
@@ -26,22 +29,34 @@ import { Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versio
 export function ScriptEditor({
   p,
   episodeId,
-  onGenerate,
+  onEpisodeChange,
+  beforeEpisodeChange,
 }: {
   p: Project
   episodeId: string
-  onGenerate: (kind: 'script' | 'assets' | 'storyboard') => void
+  onEpisodeChange: (id: string) => Promise<void>
+  beforeEpisodeChange: MutableRefObject<(() => Promise<boolean>) | null>
 }) {
   const t = useT()
-  const { run } = useWorkspace(),
+  const { run, notice } = useWorkspace(),
     ep = p.episodes.find((e) => e.id === episodeId)!,
+    episodeIndex = p.episodes.findIndex((e) => e.id === episodeId),
     [script, setScript] = useState(ep.script),
     [title, setTitle] = useState(ep.title),
-    [style, setStyle] = useState(p.style),
     [dirty, setDirty] = useState(false),
     [chatRequest, setChatRequest] = useState(''),
     [chatBusy, setChatBusy] = useState(false),
+    [attachedFiles, setAttachedFiles] = useState<{ id: string; name: string; size: number }[]>([]),
     [accountConnected, setAccountConnected] = useState<boolean | null | 'error'>(null)
+  const historyRef = useRef<HTMLDivElement>(null)
+  const turns = p.episodes
+    .flatMap((episode, index) =>
+      episode.scriptChat.map((turn, order) => ({ episode, index, order, turn })),
+    )
+    .sort(
+      (a, b) =>
+        a.turn.createdAt.localeCompare(b.turn.createdAt) || a.index - b.index || a.order - b.order,
+    )
   useEffect(() => {
     setScript(ep.script)
     setTitle(ep.title)
@@ -60,12 +75,34 @@ export function ScriptEditor({
   async function save() {
     const r = await run({ type: 'episode', projectId: p.id, episodeId, title, script })
     if (r.ok) setDirty(false)
-    await run({ type: 'project', projectId: p.id, patch: { style } })
     return r.ok
+  }
+  const saveRef = useRef(save)
+  saveRef.current = save
+  useEffect(() => {
+    beforeEpisodeChange.current = async () => !dirty || (await saveRef.current())
+    return () => {
+      beforeEpisodeChange.current = null
+    }
+  }, [beforeEpisodeChange, dirty])
+  useEffect(() => {
+    if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
+  }, [turns.length, p.id])
+  async function pickFiles() {
+    if (attachedFiles.length >= 10) return
+    const r = await run({
+      type: 'scriptChatPickFiles',
+      projectId: p.id,
+      max: 10 - attachedFiles.length,
+    })
+    if (r.ok && r.text) {
+      const picked = JSON.parse(r.text) as { id: string; name: string; size: number }[]
+      setAttachedFiles((current) => [...current, ...picked])
+    }
   }
   async function sendChatRequest() {
     const request = chatRequest.trim()
-    if (!request || chatBusy) return
+    if ((!request && !attachedFiles.length) || chatBusy) return
     setChatBusy(true)
     try {
       if (dirty && !(await save())) return
@@ -74,13 +111,17 @@ export function ScriptEditor({
         projectId: p.id,
         episodeId,
         request,
+        attachmentIds: attachedFiles.map((file) => file.id),
       })
-      if (generated.ok) setChatRequest('')
+      if (generated.ok) {
+        setChatRequest('')
+        setAttachedFiles([])
+      }
     } finally {
       setChatBusy(false)
     }
   }
-  async function applyChatScript(next: string) {
+  async function applyChatScript(next: string, targetEpisodeId: string) {
     if (chatBusy) return
     setChatBusy(true)
     try {
@@ -88,13 +129,16 @@ export function ScriptEditor({
       const applied = await run({
         type: 'episode',
         projectId: p.id,
-        episodeId,
-        title,
+        episodeId: targetEpisodeId,
+        title: p.episodes.find((episode) => episode.id === targetEpisodeId)!.title,
         script: next,
       })
       if (applied.ok) {
-        setScript(next)
-        setDirty(false)
+        if (targetEpisodeId === episodeId) {
+          setScript(next)
+          setDirty(false)
+        } else await onEpisodeChange(targetEpisodeId)
+        notice(t('已应用到剧本'))
       }
     } finally {
       setChatBusy(false)
@@ -106,23 +150,19 @@ export function ScriptEditor({
     }
     window.addEventListener('director:save', handler)
     return () => window.removeEventListener('director:save', handler)
-  }, [script, title, style])
+  }, [script, title])
   return (
     <div className="script-view">
       <div className="page-heading">
         <div>
           <span className="eyebrow">STORY DEVELOPMENT</span>
           <h1>{t('每个镜头，始于一个好故事。')}</h1>
-          <p>{t('导入故事，让 ChatGPT 帮你构建剧本、资产和分镜。')}</p>
+          <p>{t('左侧编辑当前集，右侧与 AI 讨论整个项目。')}</p>
         </div>
-        <Button onClick={() => void run({ type: 'importSource', projectId: p.id, episodeId })}>
-          <Upload size={14} />
-          {t('导入 TXT / MD / DOCX')}
-        </Button>
       </div>
       <div className="script-grid">
         <section className="script-paper">
-          <div className="row-between">
+          <div className="script-paper-header">
             <input
               className="episode-title"
               aria-label={t('集标题')}
@@ -136,6 +176,27 @@ export function ScriptEditor({
               <Check size={14} />
               {dirty ? t('保存剧本') : t('已保存')}
             </Button>
+          </div>
+          <div className="script-episode-switch">
+            <button
+              aria-label={t('上一集')}
+              disabled={episodeIndex <= 0}
+              onClick={() => void onEpisodeChange(p.episodes[episodeIndex - 1].id)}
+            >
+              <ChevronLeft size={15} />
+              {t('上一集')}
+            </button>
+            <span>
+              {episodeIndex + 1} / {p.episodes.length}
+            </span>
+            <button
+              aria-label={t('下一集')}
+              disabled={episodeIndex >= p.episodes.length - 1}
+              onClick={() => void onEpisodeChange(p.episodes[episodeIndex + 1].id)}
+            >
+              {t('下一集')}
+              <ChevronRight size={15} />
+            </button>
           </div>
           <textarea
             className="script-text"
@@ -156,146 +217,160 @@ export function ScriptEditor({
             <span>{t('纯文本剧本 · 手动保存')}</span>
           </div>
         </section>
-        <aside className="script-tools">
-          <section className="script-chat" aria-label={t('AI 编剧对话')}>
+        <aside className="script-chat" aria-label={t('AI 编剧对话')}>
+          <div className="script-chat-header">
             <div className="note-heading">
               <MessageSquareText size={17} />
               <h3>{t('AI 编剧对话')}</h3>
             </div>
-            <p className="small muted">
-              {t('在这里输入要求，AI 会直接回复。生成的候选剧本由你决定何时应用。')}
-            </p>
-            <div className="script-chat-account">
-              <span className={accountConnected ? 'green-dot' : 'neutral-dot'} />
-              <span>
-                {accountConnected === null
-                  ? t('正在检查账号…')
-                  : accountConnected === true
-                    ? t('ChatGPT 账号已连接')
-                    : accountConnected === 'error'
-                      ? t('账号检查失败，请重试')
-                      : t('需要连接 ChatGPT 账号')}
-              </span>
-              {accountConnected === 'error' && (
-                <Button onClick={() => window.dispatchEvent(new Event('director:codex-login'))}>
-                  {t('重试检查')}
-                </Button>
-              )}
-              {accountConnected === false && (
-                <Button
-                  disabled={chatBusy}
-                  onClick={async () => {
-                    setChatBusy(true)
-                    try {
-                      const r = await run({ type: 'codexLogin' })
-                      if (r.ok) setAccountConnected(true)
-                    } finally {
-                      setChatBusy(false)
-                    }
-                  }}
-                >
-                  {t('连接账号')}
-                </Button>
-              )}
-            </div>
-            <div className="script-chat-history" aria-label={t('对话记录')}>
-              {ep.scriptChat.length === 0 ? (
-                <p className="small muted">{t('还没有对话。可以从人物、冲突或下一场戏开始。')}</p>
-              ) : (
-                ep.scriptChat.map((turn) => (
-                  <article className={`script-chat-turn ${turn.role}`} key={turn.id}>
+            <span className="small muted">
+              {turns.length} {t('条项目对话')}
+            </span>
+          </div>
+          <p className="small muted">
+            {t('这里显示当前项目所有分集的对话。生成的剧本可直接放入对应集。')}
+          </p>
+          <div className="script-chat-account">
+            <span className={accountConnected === true ? 'green-dot' : 'neutral-dot'} />
+            <span>
+              {accountConnected === null
+                ? t('正在检查账号…')
+                : accountConnected === true
+                  ? t('ChatGPT 账号已连接')
+                  : accountConnected === 'error'
+                    ? t('账号检查失败，请重试')
+                    : t('需要连接 ChatGPT 账号')}
+            </span>
+            {accountConnected === 'error' && (
+              <Button onClick={() => window.dispatchEvent(new Event('director:codex-login'))}>
+                {t('重试检查')}
+              </Button>
+            )}
+            {accountConnected === false && (
+              <Button
+                disabled={chatBusy}
+                onClick={async () => {
+                  setChatBusy(true)
+                  try {
+                    const r = await run({ type: 'codexLogin' })
+                    if (r.ok) setAccountConnected(true)
+                  } finally {
+                    setChatBusy(false)
+                  }
+                }}
+              >
+                {t('连接账号')}
+              </Button>
+            )}
+          </div>
+          <div className="script-chat-history" aria-label={t('对话记录')} ref={historyRef}>
+            {turns.length === 0 ? (
+              <p className="small muted">{t('还没有对话。可以从人物、冲突或下一场戏开始。')}</p>
+            ) : (
+              turns.map(({ episode, turn }) => (
+                <article className={`script-chat-turn ${turn.role}`} key={turn.id}>
+                  <div className="script-chat-turn-meta">
                     <strong>{turn.role === 'user' ? t('你') : t('AI 编剧')}</strong>
-                    <p>{turn.text}</p>
-                    {turn.script !== undefined && (
-                      <div className="script-chat-draft">
-                        <details>
-                          <summary>
-                            {t('查看候选剧本')} · {turn.script.length.toLocaleString()} {t('字')}
-                          </summary>
-                          <pre>{turn.script}</pre>
-                        </details>
-                        <Button
-                          disabled={chatBusy || turn.script === ep.script}
-                          onClick={() => void applyChatScript(turn.script!)}
-                        >
-                          {turn.script === ep.script ? t('已应用') : t('应用到剧本')}
-                        </Button>
-                      </div>
-                    )}
-                  </article>
-                ))
-              )}
-            </div>
-            <Field label={t('本轮创作要求')}>
+                    <span>{episode.title}</span>
+                  </div>
+                  <p>{turn.text}</p>
+                  {!!turn.attachments?.length && (
+                    <div className="script-chat-files">
+                      {turn.attachments.map((file) => (
+                        <span key={file.id}>
+                          <Paperclip size={12} />
+                          {file.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {!!turn.analysis && (
+                    <div className="script-chat-analysis">
+                      <strong>{t('创作思路摘要')}</strong>
+                      <p>{turn.analysis}</p>
+                    </div>
+                  )}
+                  {!!turn.script?.trim() && (
+                    <div className="script-chat-draft">
+                      <details>
+                        <summary>
+                          {t('查看候选剧本')} · {turn.script.length.toLocaleString()} {t('字')}
+                        </summary>
+                        <pre>{turn.script}</pre>
+                      </details>
+                      <Button
+                        disabled={chatBusy || turn.script === episode.script}
+                        onClick={() => void applyChatScript(turn.script!, episode.id)}
+                      >
+                        {turn.script === episode.script ? t('已应用') : t('应用到剧本')}
+                      </Button>
+                    </div>
+                  )}
+                </article>
+              ))
+            )}
+          </div>
+          {chatBusy && (
+            <p className="script-chat-working">
+              <span className="neutral-dot" />
+              {t('AI 正在分析并生成回复…')}
+            </p>
+          )}
+          <div className="script-chat-composer">
+            <Field label={t('发送到当前集')}>
               <textarea
                 rows={3}
                 maxLength={2000}
                 value={chatRequest}
                 onChange={(e) => setChatRequest(e.target.value)}
-                placeholder={t('例如：让主角在第二场发现一个秘密，并强化结尾悬念。')}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault()
+                    void sendChatRequest()
+                  }
+                }}
+                placeholder={t('提出要求，或添加文件让 AI 分析。Ctrl+Enter 发送。')}
               />
             </Field>
-            <Button
-              primary
-              disabled={chatBusy || !chatRequest.trim()}
-              onClick={() => void sendChatRequest()}
-            >
-              <WandSparkles size={14} />
-              {chatBusy ? t('正在生成回复…') : t('发送给 AI 编剧')}
-            </Button>
-          </section>
-          <div className="note-heading">
-            <WandSparkles size={17} />
-            <h3>{t('创作路线')}</h3>
-          </div>
-          {[
-            {
-              n: '01',
-              kind: 'script' as const,
-              title: t('剧本改编'),
-              text: t('故事冲突、对白、节奏与分集。'),
-            },
-            {
-              n: '02',
-              kind: 'assets' as const,
-              title: t('提取视觉资产'),
-              text: t('角色、场景和道具，共用一份设定。'),
-            },
-            {
-              n: '03',
-              kind: 'storyboard' as const,
-              title: t('拆解镜头'),
-              text: t('从剧本进入可编辑的导演画布。'),
-            },
-          ].map((s) => (
-            <button
-              className="creation-step"
-              key={s.kind}
-              onClick={async () => {
-                if (await save()) onGenerate(s.kind)
-              }}
-            >
-              <span className="mono">{s.n}</span>
-              <div>
-                <strong>{s.title}</strong>
-                <p>{s.text}</p>
+            {!!attachedFiles.length && (
+              <div className="script-chat-files pending">
+                {attachedFiles.map((file) => (
+                  <span key={file.id}>
+                    <Paperclip size={12} />
+                    {file.name}
+                    <button
+                      aria-label={`${t('移除附件')} ${file.name}`}
+                      onClick={() =>
+                        setAttachedFiles((current) => current.filter((item) => item.id !== file.id))
+                      }
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
               </div>
-              <WandSparkles size={14} />
-            </button>
-          ))}
-          <Field label={t('全片视觉风格')}>
-            <textarea
-              rows={3}
-              value={style}
-              onChange={(e) => {
-                setStyle(e.target.value)
-                setDirty(true)
-              }}
-            />
-          </Field>
-          <p className="small muted">
-            {t('视觉风格会加入每次生成提示词。角色参考图请在 ChatGPT 中附加，以增强一致性。')}
-          </p>
+            )}
+            <div className="script-chat-actions">
+              <Button
+                disabled={chatBusy || attachedFiles.length >= 10}
+                onClick={() => void pickFiles()}
+              >
+                <Paperclip size={14} />
+                {t('添加文件')}
+              </Button>
+              <Button
+                primary
+                disabled={chatBusy || (!chatRequest.trim() && !attachedFiles.length)}
+                onClick={() => void sendChatRequest()}
+              >
+                <WandSparkles size={14} />
+                {chatBusy ? t('正在生成回复…') : t('发送给 AI 编剧')}
+              </Button>
+            </div>
+            <p className="small muted">
+              {t('可选任意类型文件，每轮最多 10 个、单个 50 MB。无法解析的格式会在回复中说明。')}
+            </p>
+          </div>
         </aside>
       </div>
     </div>

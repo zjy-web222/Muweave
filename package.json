@@ -22,6 +22,7 @@
     "fflate": "^0.8.2",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.10.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zod": "^4.1.0"
@@ -53,7 +54,9 @@
       "package.json"
     ],
     "asar": true,
-    "asarUnpack": ["node_modules/@openai/codex-win32-x64/vendor/**"],
+    "asarUnpack": [
+      "node_modules/@openai/codex-win32-x64/vendor/**"
+    ],
     "extraResources": [
       {
         "from": "src/renderer/assets/muweave-mark.png",

@@ -47,16 +47,21 @@ try {
   const accountStatus = await page.evaluate(() => window.director.command({ type: 'codexStatus' }))
   assert(accountStatus.ok, accountStatus.error)
   await page.getByText('正在检查账号…').waitFor({ state: 'hidden' })
-  assert.equal((await page.getByLabel('剧本正文').getAttribute('placeholder')).includes('&#10;'), false)
+  assert.equal(
+    (await page.getByLabel('剧本正文').getAttribute('placeholder')).includes('&#10;'),
+    false,
+  )
   await page.getByLabel('剧本正文').fill('这是经过桌面 UI 修改并保存的剧本。')
   await page.getByRole('button', { name: '保存剧本', exact: true }).click()
   await page.getByRole('button', { name: '已保存', exact: true }).waitFor()
   await page.screenshot({ path: join(evidence, '03-script-editor.png') })
-  await page.getByLabel('本轮创作要求').fill('把结尾改成悬念。')
+  assert.equal(await page.getByRole('button', { name: '导入 TXT / MD / DOCX' }).count(), 0)
+  assert.equal(await page.getByText('创作路线').count(), 0)
+  await page.getByLabel('发送到当前集').fill('把结尾改成悬念。')
   assert(await page.getByRole('button', { name: '发送给 AI 编剧' }).isEnabled())
-  const append = async (role, text, script) =>
+  const append = async (role, text, script, episodeId = project.episodes[0].id, analysis) =>
     page.evaluate(
-      async ({ projectId, episodeId, role, text, script }) =>
+      async ({ projectId, episodeId, role, text, script, analysis }) =>
         window.director.command({
           type: 'scriptChat',
           projectId,
@@ -66,20 +71,78 @@ try {
             role,
             text,
             ...(script ? { script } : {}),
+            ...(analysis ? { analysis } : {}),
             createdAt: new Date().toISOString(),
           },
         }),
-      { projectId: project.id, episodeId: project.episodes[0].id, role, text, script },
+      { projectId: project.id, episodeId, role, text, script, analysis },
     )
   assert((await append('user', '把结尾改成悬念。')).ok)
   assert((await append('assistant', '已加强悬念。', '新版悬念剧本。')).ok)
   await page.getByLabel('对话记录').getByText('把结尾改成悬念。', { exact: true }).waitFor()
   await page.getByText('已加强悬念。').waitFor()
   await page.getByRole('button', { name: '应用到剧本' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="剧本正文"]')?.value === '新版悬念剧本。',
+  )
   assert.equal(await page.getByLabel('剧本正文').inputValue(), '新版悬念剧本。')
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   assert.equal(snapshot.state.projects[0].episodes[0].script, '新版悬念剧本。')
   assert.equal(snapshot.state.projects[0].episodes[0].scriptChat.length, 2)
+  await page.getByRole('button', { name: '添加分集' }).click()
+  await page.getByLabel('集名称').fill('第二集')
+  await page.getByRole('button', { name: '创建分集' }).click()
+  await page.getByLabel('剧本正文').fill('第二集未手动保存的草稿。')
+  await page.getByRole('button', { name: '上一集' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="剧本正文"]')?.value === '新版悬念剧本。',
+  )
+  assert.equal(await page.getByLabel('剧本正文').inputValue(), '新版悬念剧本。')
+  await page.getByRole('button', { name: '下一集' }).click()
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="剧本正文"]')?.value === '第二集未手动保存的草稿。',
+  )
+  assert.equal(await page.getByLabel('剧本正文').inputValue(), '第二集未手动保存的草稿。')
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  const secondEpisode = snapshot.state.projects[0].episodes[1]
+  assert.equal(secondEpisode.script, '第二集未手动保存的草稿。')
+  assert((await append('user', '第二集问题', undefined, secondEpisode.id)).ok)
+  assert(
+    (
+      await append(
+        'assistant',
+        '第二集 AI 回复',
+        '第二集 AI 剧本。',
+        secondEpisode.id,
+        '保留人物目标，加强冲突。',
+      )
+    ).ok,
+  )
+  await page.getByRole('button', { name: '上一集' }).click()
+  await page.getByLabel('对话记录').getByText('第二集 AI 回复').waitFor()
+  await page.getByText('保留人物目标，加强冲突。').waitFor()
+  await page
+    .locator('.script-chat-turn')
+    .filter({ hasText: '第二集 AI 回复' })
+    .getByRole('button', { name: '应用到剧本' })
+    .click()
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="剧本正文"]')?.value === '第二集 AI 剧本。',
+  )
+  assert.equal(await page.getByLabel('剧本正文').inputValue(), '第二集 AI 剧本。')
+  await page.getByLabel('发送到当前集').fill('')
+  const attachment = join(data, 'reference.xyz')
+  await writeFile(attachment, '一个未知扩展名的故事参考文件。')
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async (_window, options) => {
+      if (options.filters !== undefined) throw new Error('File picker unexpectedly filters types')
+      return { canceled: false, filePaths: [file] }
+    }
+  }, attachment)
+  await page.getByRole('button', { name: '添加文件' }).click()
+  await page.locator('.script-chat-files.pending').getByText('reference.xyz').waitFor()
+  assert(await page.getByRole('button', { name: '发送给 AI 编剧' }).isEnabled())
+  await page.getByRole('button', { name: '移除附件 reference.xyz' }).click()
   await page.locator('.script-chat').screenshot({ path: join(evidence, '03-script-chat.png') })
   await page.getByRole('button', { name: '资产库 02' }).click()
   await page.getByRole('heading', { name: '让每次生成，都属于同一个世界。' }).waitFor()
@@ -193,6 +256,13 @@ try {
   await page.screenshot({ path: join(evidence, '13-english-light.png') })
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1120, 760))
   await page.screenshot({ path: join(evidence, '14-compact-desktop.png') })
+  await page.getByRole('button', { name: 'Script', exact: true }).click()
+  await page.screenshot({ path: join(evidence, '14-compact-script.png') })
+  assert(
+    await page
+      .locator('.script-chat')
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  )
   assert.equal(
     await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
     false,
@@ -211,6 +281,10 @@ try {
   assert.equal(
     snapshot.state.projects.find((p) => p.id === project.id).episodes[0].scriptChat.length,
     2,
+  )
+  assert.equal(
+    snapshot.state.projects.find((p) => p.id === project.id).episodes[1].script,
+    '第二集 AI 剧本。',
   )
   assert.equal(snapshot.state.config.theme, 'light')
   assert.equal(snapshot.state.config.locale, 'en')
@@ -235,6 +309,9 @@ try {
           'canvas',
           'shot edit',
           'script edit',
+          'episode switching and unsaved draft persistence',
+          'project-wide chat and cross-episode script apply',
+          'any-extension attachment picker',
           'assets',
           'settings',
           'language and theme switching',

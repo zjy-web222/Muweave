@@ -109,10 +109,14 @@ export class CodexText {
       throw new Error('ChatGPT 账号授权未完成，请重试。')
   }
 
-  async generate(prompt: string, schema?: Record<string, unknown>) {
+  async generate(
+    prompt: string,
+    schema?: Record<string, unknown>,
+    options?: { workingDirectory?: string; images?: string[] },
+  ) {
     if (this.busy) throw new Error('已有一轮 AI 对话正在生成，请等待完成。')
     this.busy = true
-    const workspace = join(this.store.root, 'codex-text-workspace')
+    const workspace = options?.workingDirectory || join(this.store.root, 'codex-text-workspace')
     const schemaPath = schema ? join(workspace, `response-${randomUUID()}.json`) : undefined
     try {
       if (!(await this.connected())) throw new Error('请先在连接与设置中授权 ChatGPT 账号。')
@@ -129,6 +133,7 @@ export class CodexText {
         'read-only',
         '--cd',
         workspace,
+        ...(options?.images || []).flatMap((file) => ['--image', file]),
         '--config',
         'approval_policy="never"',
         '--config',

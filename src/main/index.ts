@@ -9,9 +9,9 @@ import {
   safeStorage,
   shell,
 } from 'electron'
-import { join, extname } from 'node:path'
+import { join, extname, basename } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import mammoth from 'mammoth'
 import { ZodError } from 'zod'
@@ -22,6 +22,7 @@ import {
   shotSchema,
   type Reply,
   type Snapshot,
+  type ChatAttachment,
 } from '../shared/schema'
 import {
   buildPrompt,
@@ -32,6 +33,7 @@ import {
 import { Store, createProject } from './store'
 import { ChatGPT } from './chatgpt'
 import { CodexText } from './codex'
+import { prepareChatFile } from './chat-files'
 import { Queue, RunningHub, inputsChanged } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter } from './media'
 
@@ -48,6 +50,10 @@ let window: BrowserWindow | null = null,
   chatgpt: ChatGPT,
   codex: CodexText
 const exporter = new Exporter()
+const pendingChatFiles = new Map<
+  string,
+  { projectId: string; path: string; name: string; size: number }
+>()
 if (process.env.DIRECTOR_DATA_DIR) app.setPath('userData', process.env.DIRECTOR_DATA_DIR)
 const primary = app.requestSingleInstanceLock()
 if (!primary) app.quit()
@@ -187,37 +193,123 @@ if (primary)
             store.update(c.projectId, (p) => {
               const ep = p.episodes.find((e) => e.id === c.episodeId)
               if (!ep) throw new Error('集不存在')
-              ep.scriptChat = [...ep.scriptChat, c.turn].slice(-40)
+              ep.scriptChat = [...ep.scriptChat, c.turn]
             })
             break
+          case 'scriptChatPickFiles': {
+            store.project(c.projectId)
+            const selection = await dialog.showOpenDialog(window!, {
+              properties: ['openFile', 'multiSelections'],
+            })
+            if (selection.canceled) break
+            if (selection.filePaths.length > c.max) throw new Error('每轮最多添加 10 个附件')
+            const picked = []
+            for (const path of selection.filePaths) {
+              const file = await stat(path)
+              if (!file.isFile()) throw new Error('只能上传文件')
+              if (file.size > 50 * 1024 * 1024) throw new Error('单个附件不能超过 50 MB')
+              const attachment = {
+                id: randomUUID(),
+                name: basename(path).slice(0, 255),
+                size: file.size,
+              }
+              pendingChatFiles.set(attachment.id, { ...attachment, projectId: c.projectId, path })
+              picked.push(attachment)
+            }
+            text = JSON.stringify(picked)
+            break
+          }
           case 'scriptChatGenerate': {
+            if (!c.request.trim() && !c.attachmentIds.length)
+              throw new Error('请输入创作要求或添加附件')
             const p = store.project(c.projectId)
             const ep = p.episodes.find((e) => e.id === c.episodeId)
             if (!ep) throw new Error('集不存在')
-            const prompt = buildScriptChatPrompt(p, c.episodeId, c.request, ep.script, p.style)
-            const rawReply = await codex.generate(prompt, {
-              type: 'object',
-              properties: { reply: { type: 'string' }, script: { type: 'string' } },
-              required: ['reply', 'script'],
-              additionalProperties: false,
+            const files = c.attachmentIds.map((attachmentId) => {
+              const file = pendingChatFiles.get(attachmentId)
+              if (!file || file.projectId !== c.projectId)
+                throw new Error('附件已失效，请重新选择文件')
+              return { ...file, id: attachmentId }
             })
-            const reply = parseScriptChatReply(rawReply)
-            const now = new Date().toISOString()
-            store.update(c.projectId, (current) => {
-              const target = current.episodes.find((e) => e.id === c.episodeId)
-              if (!target) throw new Error('集不存在')
-              target.scriptChat = [
-                ...target.scriptChat,
-                { id: randomUUID(), role: 'user' as const, text: c.request, createdAt: now },
+            const base = join(store.root, 'codex-text-workspace')
+            let workdir: string | undefined
+            try {
+              if (files.length) {
+                await mkdir(base, { recursive: true })
+                workdir = await mkdtemp(join(base, 'chat-'))
+              }
+              const staged = []
+              for (const file of files) {
+                if ((await stat(file.path)).size > 50 * 1024 * 1024)
+                  throw new Error('附件已超过 50 MB，请重新选择')
+                const target = join(workdir!, `${file.id}-${file.name.slice(-150)}`)
+                await copyFile(file.path, target)
+                staged.push({ ...file, stagedPath: target })
+              }
+              const prompt = buildScriptChatPrompt(
+                p,
+                c.episodeId,
+                c.request.trim(),
+                ep.script,
+                p.style,
+                await Promise.all(
+                  staged.map((file) => prepareChatFile(file.stagedPath, file.name, file.size)),
+                ),
+              )
+              const rawReply = await codex.generate(
+                prompt,
                 {
-                  id: randomUUID(),
-                  role: 'assistant' as const,
-                  text: reply.reply.trim() || '已生成剧本草稿',
-                  script: reply.script?.trim() ? reply.script : undefined,
-                  createdAt: now,
+                  type: 'object',
+                  properties: {
+                    reply: { type: 'string' },
+                    analysis: { type: 'string' },
+                    script: { type: 'string' },
+                  },
+                  required: ['reply', 'analysis', 'script'],
+                  additionalProperties: false,
                 },
-              ].slice(-40)
-            })
+                {
+                  workingDirectory: workdir,
+                  images: staged
+                    .filter((file) => /\.(png|jpe?g|webp)$/i.test(file.name))
+                    .map((file) => file.stagedPath),
+                },
+              )
+              const reply = parseScriptChatReply(rawReply)
+              const attachments: ChatAttachment[] = []
+              if (staged.length) await mkdir(store.file(c.projectId, 'chat'), { recursive: true })
+              for (const file of staged) {
+                const saved = `chat/${file.id}`
+                await copyFile(file.stagedPath, store.file(c.projectId, saved))
+                attachments.push({ id: file.id, name: file.name, size: file.size, file: saved })
+              }
+              const now = new Date().toISOString()
+              store.update(c.projectId, (current) => {
+                const target = current.episodes.find((e) => e.id === c.episodeId)
+                if (!target) throw new Error('集不存在')
+                target.scriptChat = [
+                  ...target.scriptChat,
+                  {
+                    id: randomUUID(),
+                    role: 'user' as const,
+                    text: c.request.trim() || '请分析附件',
+                    attachments,
+                    createdAt: now,
+                  },
+                  {
+                    id: randomUUID(),
+                    role: 'assistant' as const,
+                    text: reply.reply.trim() || '已生成剧本草稿',
+                    analysis: reply.analysis?.trim() || undefined,
+                    script: reply.script?.trim() ? reply.script : undefined,
+                    createdAt: now,
+                  },
+                ]
+              })
+              for (const file of files) pendingChatFiles.delete(file.id)
+            } finally {
+              if (workdir) await rm(workdir, { recursive: true, force: true })
+            }
             break
           }
           case 'codexStatus':

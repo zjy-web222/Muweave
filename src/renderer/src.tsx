@@ -103,6 +103,7 @@ function App() {
     [episodeTitle, setEpisodeTitle] = useState('第二集')
   const t = (text: string) => translate(state?.config.locale || 'zh', text)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const beforeEpisodeChange = useRef<(() => Promise<boolean>) | null>(null)
   const notice = useCallback((s: string) => {
     setToast(s)
     clearTimeout(toastTimer.current)
@@ -134,6 +135,11 @@ function App() {
   const p = state?.projects.find((p) => p.id === pid) || state?.projects[0],
     episodeId = p?.episodes.find((e) => e.id === epid)?.id || p?.episodes[0]?.id || '',
     episode = p?.episodes.find((e) => e.id === episodeId)
+  async function changeEpisode(nextId: string) {
+    if (nextId === episodeId) return
+    if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current())) return
+    setEpid(nextId)
+  }
   const shots = p?.shots.filter((s) => s.episodeId === episodeId) || [],
     filtered = shots.filter((s) =>
       `${s.title} ${s.action} ${s.scene}`.toLowerCase().includes(query.toLowerCase()),
@@ -231,7 +237,9 @@ function App() {
                 <button
                   key={project.id}
                   className={p?.id === project.id ? 'active' : ''}
-                  onClick={() => {
+                  onClick={async () => {
+                    if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current()))
+                      return
                     setPid(project.id)
                     setEpid('')
                   }}
@@ -267,7 +275,7 @@ function App() {
                     <button
                       className={ep.id === episodeId ? 'active' : ''}
                       key={ep.id}
-                      onClick={() => setEpid(ep.id)}
+                      onClick={() => void changeEpisode(ep.id)}
                     >
                       <span className="mono">{String(i + 1).padStart(2, '0')}</span>
                       <span>{ep.title}</span>
@@ -420,7 +428,15 @@ function App() {
                       <React.Fragment key={s.id}>
                         <button
                           className={stage === s.id ? 'active' : ''}
-                          onClick={() => setStage(s.id)}
+                          onClick={async () => {
+                            if (
+                              s.id !== stage &&
+                              beforeEpisodeChange.current &&
+                              !(await beforeEpisodeChange.current())
+                            )
+                              return
+                            setStage(s.id)
+                          }}
                         >
                           {s.icon}
                           {s.label}
@@ -653,10 +669,11 @@ function App() {
                   </div>
                 ) : stage === 'script' ? (
                   <ScriptEditor
-                    key={`${p.id}-${episodeId}`}
+                    key={p.id}
                     p={p}
                     episodeId={episodeId}
-                    onGenerate={(kind) => setGenerator({ kind })}
+                    onEpisodeChange={changeEpisode}
+                    beforeEpisodeChange={beforeEpisodeChange}
                   />
                 ) : stage === 'assets' ? (
                   <AssetsView
@@ -752,6 +769,7 @@ function App() {
               <Button
                 primary
                 onClick={async () => {
+                  if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current())) return
                   const r = await run({
                     type: 'episode',
                     projectId: p.id,

@@ -167,6 +167,16 @@ export async function exportArchive(store: Store, id: string, target: string) {
       throw new Error('当前 ZIP 存档上限 512 MB；请使用“打开项目目录”备份大型项目。')
     entries[m.file] = new Uint8Array(await readFile(f))
   }
+  for (const episode of p.episodes)
+    for (const turn of episode.scriptChat)
+      for (const attachment of turn.attachments || []) {
+        if (entries[attachment.file]) continue
+        const file = store.file(id, attachment.file)
+        size += (await stat(file)).size
+        if (size > 512 * 1024 * 1024)
+          throw new Error('当前 ZIP 存档上限 512 MB；请使用“打开项目目录”备份大型项目。')
+        entries[attachment.file] = new Uint8Array(await readFile(file))
+      }
   const data = await new Promise<Uint8Array>((yes, no) =>
     zip(entries, { level: 0 }, (err, data) => (err ? no(err) : yes(data))),
   )
@@ -185,7 +195,7 @@ export async function restoreArchive(store: Store, file: string) {
         filter: (entry) => {
           total += entry.originalSize
           const safe =
-            /^(project\.json|manifest\.json|tasks\.json|media\/[a-zA-Z0-9_-]+\.(png|jpg|jpeg|webp|mp4|mov|webm|wav|mp3|m4a|aac|ogg))$/.test(
+            /^(project\.json|manifest\.json|tasks\.json|media\/[a-zA-Z0-9_-]+\.(png|jpg|jpeg|webp|mp4|mov|webm|wav|mp3|m4a|aac|ogg)|chat\/[a-zA-Z0-9_-]{1,100})$/.test(
               entry.name,
             )
           if (!safe || total > 512 * 1024 * 1024) invalid = true
@@ -210,10 +220,19 @@ export async function restoreArchive(store: Store, file: string) {
     if (!/^media\/[a-zA-Z0-9_-]+\.[a-z0-9]+$/.test(m.file) || !data[m.file])
       throw new Error('存档素材缺失或路径不安全')
   }
+  for (const episode of p.episodes)
+    for (const turn of episode.scriptChat)
+      for (const attachment of turn.attachments || [])
+        if (!data[attachment.file]) throw new Error('存档附件缺失')
   const dir = store.dir(p.id)
   try {
     await mkdir(join(dir, 'media'), { recursive: true })
     for (const m of p.media) await writeFile(inside(dir, m.file), data[m.file])
+    await mkdir(join(dir, 'chat'), { recursive: true })
+    for (const episode of p.episodes)
+      for (const turn of episode.scriptChat)
+        for (const attachment of turn.attachments || [])
+          await writeFile(inside(dir, attachment.file), data[attachment.file])
     store.save(p)
   } catch (e) {
     await rm(dir, { recursive: true, force: true })
