@@ -55,6 +55,24 @@ type Generator = {
   assetId?: string
   slot?: 'first' | 'last'
 }
+function commandError(message: string) {
+  try {
+    const issues = JSON.parse(message)
+    if (
+      Array.isArray(issues) &&
+      issues.some(
+        (issue) =>
+          issue.code === 'invalid_union' &&
+          issue.discriminator === 'type' &&
+          issue.path?.length === 0,
+      )
+    )
+      return '开发版界面与主进程版本不一致，请重启应用后重试。'
+  } catch {
+    // Keep ordinary application errors as they are.
+  }
+  return message
+}
 function App() {
   const [state, setState] = useState<Snapshot | null>(null),
     [pid, setPid] = useState(''),
@@ -97,7 +115,7 @@ function App() {
         if (r.ok) {
           setState(r.state)
           if (r.message) notice(r.message)
-        } else setError(r.error)
+        } else setError(commandError(r.error))
         return r
       } catch (e) {
         const error = e instanceof Error ? e.message : t('桌面连接失败')
@@ -262,6 +280,27 @@ function App() {
                   <span className="small muted">
                     {p.aspect} · {p.shots.length} {t('镜头')}
                   </span>
+                  <button
+                    className="remove-project"
+                    onClick={() =>
+                      setConfirm({
+                        title: `${t('备份并移除项目')}「${p.title}」？`,
+                        text: t(
+                          '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。',
+                        ),
+                        run: async () => {
+                          const r = await run({ type: 'deleteProject', projectId: p.id })
+                          if (r.ok && !r.state.projects.some((item) => item.id === p.id)) {
+                            setPid(r.state.projects[0]?.id || '')
+                            setEpid('')
+                          }
+                        },
+                      })
+                    }
+                  >
+                    <Trash2 size={13} />
+                    {t('备份并移除项目')}
+                  </button>
                 </div>
               </>
             )}

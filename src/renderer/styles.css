@@ -464,6 +464,18 @@ small,
 .project-note .small {
   font-size: 10px;
 }
+.remove-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 17px;
+  padding: 6px 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.remove-project:hover {
+  color: var(--danger);
+}
 .sidebar-bottom {
   margin-top: auto;
   padding-top: 15px;

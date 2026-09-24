@@ -1,5 +1,5 @@
 import { _electron as electron } from 'playwright'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import assert from 'node:assert/strict'
@@ -44,12 +44,16 @@ try {
     shot = project.shots[0]
   assert.equal(shot.title, '桌面测试 · 已保存的镜头')
   await page.getByRole('button', { name: '剧本 01' }).click()
+  const accountStatus = await page.evaluate(() => window.director.command({ type: 'codexStatus' }))
+  assert(accountStatus.ok, accountStatus.error)
+  await page.getByText('正在检查账号…').waitFor({ state: 'hidden' })
+  assert.equal((await page.getByLabel('剧本正文').getAttribute('placeholder')).includes('&#10;'), false)
   await page.getByLabel('剧本正文').fill('这是经过桌面 UI 修改并保存的剧本。')
   await page.getByRole('button', { name: '保存剧本', exact: true }).click()
   await page.getByRole('button', { name: '已保存', exact: true }).waitFor()
   await page.screenshot({ path: join(evidence, '03-script-editor.png') })
   await page.getByLabel('本轮创作要求').fill('把结尾改成悬念。')
-  await page.getByRole('button', { name: '发送给 AI 编剧' }).waitFor()
+  assert(await page.getByRole('button', { name: '发送给 AI 编剧' }).isEnabled())
   const append = async (role, text, script) =>
     page.evaluate(
       async ({ projectId, episodeId, role, text, script }) =>
@@ -130,6 +134,27 @@ try {
   assert(restored.ok, restored.error)
   assert.equal(restored.state.projects.length, 2)
   assert.equal(restored.state.projects[0].media.length, 1)
+  const restoredProject = restored.state.projects.find((item) => item.id !== project.id)
+  await app.evaluate(({ dialog }) => {
+    dialog.showSaveDialog = async () => ({ canceled: true })
+  })
+  await page.locator('.project-nav').getByRole('button', { name: restoredProject.title }).click()
+  await page.getByRole('button', { name: '备份并移除项目' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'hidden' })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects.length, 2, 'canceling the backup keeps the project')
+  const removedArchive = join(data, 'removed-project.director.zip')
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })
+  }, removedArchive)
+  await page.getByRole('button', { name: '备份并移除项目' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'hidden' })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects.length, 1)
+  assert.equal(snapshot.state.projects[0].id, project.id)
+  assert((await stat(removedArchive)).size > 0)
   await page
     .getByRole('group', { name: '界面主题' })
     .getByRole('button', { name: '深色 · Graphite' })
@@ -178,7 +203,7 @@ try {
   await page.waitForFunction(() => !!window.director)
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   assert(snapshot.ok)
-  assert.equal(snapshot.state.projects.length, 2)
+  assert.equal(snapshot.state.projects.length, 1)
   assert.equal(
     snapshot.state.projects.find((p) => p.id === project.id).shots[0].title,
     '桌面测试 · 已保存的镜头',
@@ -215,6 +240,7 @@ try {
           'language and theme switching',
           'media import and protocol',
           'archive roundtrip',
+          'project backup and removal',
           'dark mode',
           '1120px desktop',
           'restart persistence',

@@ -41,7 +41,7 @@ export function ScriptEditor({
     [dirty, setDirty] = useState(false),
     [chatRequest, setChatRequest] = useState(''),
     [chatBusy, setChatBusy] = useState(false),
-    [accountConnected, setAccountConnected] = useState<boolean | null>(null)
+    [accountConnected, setAccountConnected] = useState<boolean | null | 'error'>(null)
   useEffect(() => {
     setScript(ep.script)
     setTitle(ep.title)
@@ -50,7 +50,7 @@ export function ScriptEditor({
   useEffect(() => {
     const refresh = () => {
       void run({ type: 'codexStatus' }).then((r) => {
-        if (r.ok) setAccountConnected(r.text === 'connected')
+        setAccountConnected(r.ok ? r.text === 'connected' : 'error')
       })
     }
     refresh()
@@ -146,7 +146,7 @@ export function ScriptEditor({
               setDirty(true)
             }}
             placeholder={t(
-              '写下你的故事，或导入小说 / 剧本。&#10;&#10;人物想要什么？什么阻碍了他们？这一集的最后，什么发生了变化？',
+              '写下你的故事，或导入小说 / 剧本。\n\n人物想要什么？什么阻碍了他们？这一集的最后，什么发生了变化？',
             )}
           />
           <div className="paper-footer">
@@ -170,10 +170,17 @@ export function ScriptEditor({
               <span>
                 {accountConnected === null
                   ? t('正在检查账号…')
-                  : accountConnected
+                  : accountConnected === true
                     ? t('ChatGPT 账号已连接')
-                    : t('需要连接 ChatGPT 账号')}
+                    : accountConnected === 'error'
+                      ? t('账号检查失败，请重试')
+                      : t('需要连接 ChatGPT 账号')}
               </span>
+              {accountConnected === 'error' && (
+                <Button onClick={() => window.dispatchEvent(new Event('director:codex-login'))}>
+                  {t('重试检查')}
+                </Button>
+              )}
               {accountConnected === false && (
                 <Button
                   disabled={chatBusy}
@@ -230,7 +237,7 @@ export function ScriptEditor({
             </Field>
             <Button
               primary
-              disabled={chatBusy || !chatRequest.trim() || accountConnected !== true}
+              disabled={chatBusy || !chatRequest.trim()}
               onClick={() => void sendChatRequest()}
             >
               <WandSparkles size={14} />

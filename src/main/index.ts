@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { readFile, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import mammoth from 'mammoth'
+import { ZodError } from 'zod'
 import {
   commandSchema,
   configSchema,
@@ -528,7 +529,13 @@ if (primary)
         if (c.type !== 'snapshot') changed()
         return { ok: true, state: snapshot(), message, text }
       } catch (e) {
-        const message = e instanceof Error ? e.message : '操作失败'
+        const message =
+          e instanceof ZodError &&
+          e.issues.some((issue) => issue.code === 'invalid_union' && issue.path.length === 0)
+            ? '开发版界面与主进程版本不一致，请重启应用后重试。'
+            : e instanceof Error
+              ? e.message
+              : '操作失败'
         return {
           ok: false,
           error: message.replaceAll(key() || '__no_secret__', '[已隐藏]').slice(0, 2500),

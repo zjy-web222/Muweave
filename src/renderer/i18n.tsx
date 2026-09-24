@@ -15,6 +15,11 @@ export const en: Record<string, string> = {
   新建项目: 'New project',
   工作空间: 'Workspace',
   还没有项目: 'No projects yet',
+  备份并移除项目: 'Back up and remove project',
+  '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。':
+    'Choose where to save a ZIP backup. The project will then be removed from the list; original media files remain. Canceling the save keeps the project.',
+  '开发版界面与主进程版本不一致，请重启应用后重试。':
+    'The development UI and app process are out of sync. Restart the app and try again.',
   '当前项目 / 分集': 'Current project / Episodes',
   添加分集: 'Add episode',
   '一个故事，无限种可能。': 'One story, endless possibilities.',
@@ -281,7 +286,7 @@ export const en: Record<string, string> = {
   保存剧本: 'Save script',
   已保存: 'Saved',
   剧本正文: 'Script body',
-  '写下你的故事，或导入小说 / 剧本。&#10;&#10;人物想要什么？什么阻碍了他们？这一集的最后，什么发生了变化？':
+  '写下你的故事，或导入小说 / 剧本。\n\n人物想要什么？什么阻碍了他们？这一集的最后，什么发生了变化？':
     'Write your story or import a novel or script.\n\nWhat does your character want? What stands in their way? What changes by the end of this episode?',
   字: 'characters',
   '纯文本剧本 · 手动保存': 'Plain text script · Save manually',
@@ -291,6 +296,8 @@ export const en: Record<string, string> = {
     'Write a request here and AI will reply directly. You decide when to apply a script draft.',
   'ChatGPT 账号已连接': 'ChatGPT account connected',
   '需要连接 ChatGPT 账号': 'Connect a ChatGPT account',
+  '账号检查失败，请重试': 'Account check failed. Try again.',
+  重试检查: 'Retry check',
   '正在检查账号…': 'Checking account…',
   已连接: 'Connected',
   连接账号: 'Connect account',
