@@ -49,6 +49,11 @@ export const importSchema = z
 export function parseDirector(raw: string) {
   return importSchema.parse(jsonObject(raw))
 }
+export function storyboardImport(raw: string) {
+  const shots = parseDirector(raw).shots
+  if (!shots?.length) throw new Error('AI 未返回分镜镜头，请修改要求后重试。')
+  return JSON.stringify({ shots })
+}
 const scriptChatReplySchema = z
   .object({
     reply: z.string().max(10000).default(''),
@@ -111,7 +116,10 @@ export function buildPrompt(
     storyboard:
       '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。',
   }[kind]
-  return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：\n{"episodeTitle":"集标题","script":"完整剧本","assets":[{"kind":"character","name":"角色名","description":"外观与服装","prompt":"英文参考图提示词"}],"shots":[{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"对白/旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}]}\n只返回本任务相关字段；不要捏造已有素材和生成结果。`
+  const shotExample = '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"对白/旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
+  if (kind === 'storyboard')
+    return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：{"shots":[${shotExample}]}\n只返回本集分镜，不改写剧本或资产，不捏造已有素材和生成结果。`
+  return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：\n{"episodeTitle":"集标题","script":"完整剧本","assets":[{"kind":"character","name":"角色名","description":"外观与服装","prompt":"英文参考图提示词"}],"shots":[${shotExample}]}\n只返回本任务相关字段；不要捏造已有素材和生成结果。`
 }
 export function subtitleTime(seconds: number) {
   const ms = Math.round(seconds * 1000)

@@ -47,6 +47,15 @@ try {
   const project = snapshot.state.projects[0],
     shot = project.shots[0]
   assert.equal(shot.title, '桌面测试 · 已保存的镜头')
+  await page.getByRole('button', { name: 'AI 拆解分镜' }).click()
+  const storyboardDialog = page.getByRole('dialog', { name: 'AI 生成分镜' })
+  await storyboardDialog.waitFor()
+  assert.equal(await storyboardDialog.getByRole('button', { name: '生成分镜' }).count(), 1)
+  assert.equal(await storyboardDialog.getByRole('button', { name: '复制并打开 ChatGPT' }).count(), 0)
+  assert.equal(await storyboardDialog.getByText('发送给 ChatGPT 的提示词').count(), 0)
+  await storyboardDialog.getByRole('textbox', { name: '补充创作要求（可选）' }).fill('突出线索出现的悬念。')
+  await storyboardDialog.screenshot({ path: join(evidence, '02-storyboard-generator.png') })
+  await storyboardDialog.getByRole('button', { name: '取消' }).click()
   const soleEpisodeRemoval = await page.evaluate(
     ({ projectId, episodeId }) =>
       window.director.command({ type: 'deleteEpisode', projectId, episodeId }),
@@ -299,6 +308,10 @@ try {
   await page.screenshot({ path: join(evidence, '12-english-tasks.png') })
   await page.getByRole('button', { name: 'Close dialog', exact: true }).click()
   await page.getByRole('button', { name: 'Director board 03' }).click()
+  await page.getByRole('button', { name: 'AI storyboard' }).click()
+  const englishStoryboard = page.getByRole('dialog', { name: 'AI storyboard generation' })
+  await englishStoryboard.getByRole('button', { name: 'Generate shots' }).waitFor()
+  await englishStoryboard.getByRole('button', { name: 'Cancel' }).click()
   await page
     .getByRole('group', { name: 'Interface theme' })
     .getByRole('button', { name: 'Light · Warm paper' })
@@ -358,6 +371,7 @@ try {
         checks: [
           'welcome',
           'default list and canvas switch',
+          'direct AI storyboard generation dialog',
           'shot edit',
           'script edit',
           'episode switching and unsaved draft persistence',

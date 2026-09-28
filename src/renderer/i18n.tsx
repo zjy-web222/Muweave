@@ -331,9 +331,23 @@ export const en: Record<string, string> = {
   '连接 ChatGPT 账号后，文字结果可直接返回软件。':
     'After connecting a ChatGPT account, text results return directly to the app.',
   直接生成文字: 'Generate text directly',
-  '点击“在软件中直接生成”即可获得回复；浏览器辅助仍可作为备选方式。':
-    'Select Generate in app for a direct reply. Browser assistance remains available as a fallback.',
+  '点击生成后，文字结果会直接返回软件。': 'Click Generate to receive the text result in the app.',
   在软件中直接生成: 'Generate in app',
+  'AI 生成分镜': 'AI storyboard generation',
+  '使用已连接的 ChatGPT 账号生成可编辑的分镜镜头。':
+    'Generate editable shots with the connected ChatGPT account.',
+  当前集: 'Current episode',
+  '会参考当前剧本和项目资产；新分镜将追加到当前集，已有镜头保留。':
+    'The current script and project assets provide context. New shots are added to this episode; existing shots remain.',
+  '补充创作要求（可选）': 'Additional direction (optional)',
+  '例如：用 8 个镜头突出主角发现线索的悬念。':
+    'For example: use eight shots to build suspense as the lead finds a clue.',
+  生成分镜: 'Generate shots',
+  '正在生成分镜…': 'Generating shots…',
+  'AI 未返回分镜镜头，请修改要求后重试。':
+    'The AI did not return any shots. Adjust the direction and try again.',
+  'AI 返回的分镜格式无效，请修改要求后重试。':
+    'The AI returned an invalid storyboard. Adjust the direction and try again.',
   '等待生成结果或粘贴 JSON 后预览': 'Generate a result or paste JSON to preview',
   对话记录: 'Conversation history',
   '还没有对话。可以从人物、冲突或下一场戏开始。':
@@ -512,6 +526,8 @@ export function translate(locale: Locale, text: string): string {
   const updated = /^已更新剧本\/资产，追加 (\d+) 个镜头；旧镜头未覆盖$/.exec(text)
   if (updated)
     return `Script and assets updated; ${updated[1]} shots added without replacing existing shots`
+  const storyboard = /^已追加 (\d+) 个分镜到当前集$/.exec(text)
+  if (storyboard) return `${storyboard[1]} shots added to the current episode`
   const download = /^视频下载失败 HTTP (\d+)$/.exec(text)
   if (download) return `Video download failed: HTTP ${download[1]}`
   return text

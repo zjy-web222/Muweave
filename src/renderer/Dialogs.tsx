@@ -14,7 +14,7 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import { type Config, type Project, type Shot, type Mapping } from '../shared/schema'
-import { buildPrompt, parseDirector } from '../shared/director'
+import { buildPrompt, parseDirector, storyboardImport } from '../shared/director'
 import { Button, Field, Modal, useWorkspace } from './ui'
 
 export function CreateDialog({
@@ -112,7 +112,7 @@ export function GenerationDialog({
 }: {
   p: Project
   episodeId: string
-  kind: 'script' | 'assets' | 'storyboard' | 'image'
+  kind: 'script' | 'assets' | 'image'
   shot?: Shot
   assetId?: string
   slot?: 'first' | 'last'
@@ -170,7 +170,7 @@ export function GenerationDialog({
                     ? t(
                         '提示词会复制到剪贴板，并打开独立 ChatGPT 窗口。请粘贴后发送；遇到验证时由你手动完成。不是官方第三方 OAuth / API 授权。',
                       )
-                    : t('点击“在软件中直接生成”即可获得回复；浏览器辅助仍可作为备选方式。')}
+                    : t('点击生成后，文字结果会直接返回软件。')}
                 </p>
               </div>
             </div>
@@ -274,23 +274,25 @@ export function GenerationDialog({
                 {generating ? t('正在生成回复…') : t('在软件中直接生成')}
               </Button>
             )}
-            <Button
-              disabled={generating}
-              onClick={async () => {
-                const r = await run({
-                  type: 'chatgpt',
-                  projectId: p.id,
-                  ownerId: assetId || shot?.id || episodeId,
-                  kind,
-                  prompt,
-                  slot: assetId ? 'reference' : slot,
-                })
-                if (r.ok) setStep('result')
-              }}
-            >
-              {t('复制并打开 ChatGPT')}
-              <ArrowUpRight size={15} />
-            </Button>
+            {kind === 'image' && (
+              <Button
+                disabled={generating}
+                onClick={async () => {
+                  const r = await run({
+                    type: 'chatgpt',
+                    projectId: p.id,
+                    ownerId: assetId || shot?.id || episodeId,
+                    kind,
+                    prompt,
+                    slot: assetId ? 'reference' : slot,
+                  })
+                  if (r.ok) setStep('result')
+                }}
+              >
+                {t('复制并打开 ChatGPT')}
+                <ArrowUpRight size={15} />
+              </Button>
+            )}
           </>
         ) : kind !== 'image' ? (
           <Button
@@ -308,6 +310,91 @@ export function GenerationDialog({
         ) : (
           <Button onClick={() => setStep('prompt')}>{t('返回提示词')}</Button>
         )}
+      </div>
+    </Modal>
+  )
+}
+export function StoryboardDialog({
+  p,
+  episodeId,
+  onClose,
+}: {
+  p: Project
+  episodeId: string
+  onClose: () => void
+}) {
+  const t = useT()
+  const { run } = useWorkspace()
+  const [request, setRequest] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [error, setError] = useState('')
+  const episode = p.episodes.find((item) => item.id === episodeId)
+  return (
+    <Modal
+      title={t('AI 生成分镜')}
+      subtitle={t('使用已连接的 ChatGPT 账号生成可编辑的分镜镜头。')}
+      onClose={() => !generating && onClose()}
+    >
+      <div className="modal-body">
+        <div className="notice">
+          <ShieldCheck size={18} />
+          <div>
+            {episode?.title || t('当前集')}
+            <p>{t('会参考当前剧本和项目资产；新分镜将追加到当前集，已有镜头保留。')}</p>
+          </div>
+        </div>
+        <Field label={t('补充创作要求（可选）')}>
+          <textarea
+            rows={5}
+            maxLength={2000}
+            value={request}
+            disabled={generating}
+            onChange={(event) => setRequest(event.target.value)}
+            placeholder={t('例如：用 8 个镜头突出主角发现线索的悬念。')}
+          />
+        </Field>
+        {error && (
+          <p className="danger small" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+      <div className="modal-footer">
+        <Button disabled={generating} onClick={onClose}>
+          {t('取消')}
+        </Button>
+        <Button
+          primary
+          disabled={generating}
+          onClick={async () => {
+            setGenerating(true)
+            setError('')
+            try {
+              const prompt = buildPrompt(p, episodeId, 'storyboard')
+              const generated = await run({
+                type: 'generateText',
+                projectId: p.id,
+                episodeId,
+                kind: 'storyboard',
+                prompt: request.trim() ? `${prompt}\n\n用户补充要求：${request.trim()}` : prompt,
+              })
+              if (!generated.ok) return
+              const raw = storyboardImport(generated.text || '')
+              const imported = await run({ type: 'parse', projectId: p.id, episodeId, raw })
+              if (imported.ok) onClose()
+            } catch (cause) {
+              setError(
+                cause instanceof Error && cause.message === 'AI 未返回分镜镜头，请修改要求后重试。'
+                  ? t(cause.message)
+                  : t('AI 返回的分镜格式无效，请修改要求后重试。'),
+              )
+            } finally {
+              setGenerating(false)
+            }
+          }}
+        >
+          {generating ? t('正在生成分镜…') : t('生成分镜')}
+        </Button>
       </div>
     </Modal>
   )

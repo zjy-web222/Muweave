@@ -11,6 +11,7 @@ import { exportArchive, restoreArchive, importMedia, Exporter } from '../src/mai
 import {
   buildScriptChatPrompt,
   parseDirector,
+  storyboardImport,
   parseScriptChatReply,
   toSrt,
   escapeHtml,
@@ -76,6 +77,14 @@ describe('local project state', () => {
     const data = parseDirector('```json\n{"shots":[{"title":"镜头一","duration":6}]}\n```')
     expect(data.shots?.[0].duration).toBe(6)
     expect(() => parseDirector('{"shots":[{"title":"x","duration":999}]}')).toThrow()
+    const storyboard = JSON.parse(
+      storyboardImport(
+        '{"script":"should not replace","assets":[{"kind":"prop","name":"new"}],"shots":[{"title":"镜头一","duration":6}]}',
+      ),
+    )
+    expect(Object.keys(storyboard)).toEqual(['shots'])
+    expect(storyboard.shots).toMatchObject([{ title: '镜头一', duration: 6 }])
+    expect(() => storyboardImport('{"script":"only a script"}')).toThrow('AI 未返回分镜镜头')
     expect(toSrt(p.shots)).toContain('00:00:06,000 --> 00:00:11,000')
     expect(escapeHtml('<script>')).toBe('&lt;script&gt;')
   })

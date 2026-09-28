@@ -508,7 +508,10 @@ if (primary)
                   }),
                 )
             })
-            message = `已更新剧本/资产，追加 ${result.shots?.length || 0} 个镜头；旧镜头未覆盖`
+            message =
+              result.script === undefined && !result.assets?.length
+                ? `已追加 ${result.shots?.length || 0} 个分镜到当前集`
+                : `已更新剧本/资产，追加 ${result.shots?.length || 0} 个镜头；旧镜头未覆盖`
             break
           }
           case 'clipboard':

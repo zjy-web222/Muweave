@@ -43,7 +43,7 @@ import {
 import { Button, Empty, Modal, Field, Preview, Workspace, Working } from './ui'
 import Canvas from './Canvas'
 import Inspector from './Inspector'
-import { CreateDialog, GenerationDialog, SettingsDialog, ExportDialog } from './Dialogs'
+import { CreateDialog, GenerationDialog, StoryboardDialog, SettingsDialog, ExportDialog } from './Dialogs'
 import { AssetsView, CutView, ScriptEditor, Tasks } from './Production'
 import './styles.css'
 import { Language, translate } from './i18n'
@@ -785,14 +785,23 @@ function App() {
           <ExportDialog p={p} episodeId={episodeId} onClose={() => setExporting(false)} />
         )}{' '}
         {tasks && <Tasks jobs={state.jobs} onClose={() => setTasks(false)} />}{' '}
-        {p && generator && (
+        {p && generator && (generator.kind === 'storyboard' ? (
+          <StoryboardDialog
+            p={p}
+            episodeId={episodeId}
+            onClose={() => setGenerator(null)}
+          />
+        ) : (
           <GenerationDialog
             p={p}
             episodeId={episodeId}
-            {...generator}
+            kind={generator.kind}
+            shot={generator.shot}
+            assetId={generator.assetId}
+            slot={generator.slot}
             onClose={() => setGenerator(null)}
           />
-        )}
+        ))}
         {newEpisode && p && (
           <Modal title={t('添加分集')} onClose={() => setNewEpisode(false)}>
             <div className="modal-body">
