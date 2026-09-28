@@ -324,7 +324,7 @@ export function StoryboardDialog({
   onClose: () => void
 }) {
   const t = useT()
-  const { run } = useWorkspace()
+  const { run, notice } = useWorkspace()
   const [request, setRequest] = useState('')
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
@@ -381,7 +381,10 @@ export function StoryboardDialog({
               if (!generated.ok) return
               const raw = storyboardImport(generated.text || '')
               const imported = await run({ type: 'parse', projectId: p.id, episodeId, raw })
-              if (imported.ok) onClose()
+              if (imported.ok) {
+                notice(t('分镜已追加到当前集'))
+                onClose()
+              }
             } catch (cause) {
               setError(
                 cause instanceof Error && cause.message === 'AI 未返回分镜镜头，请修改要求后重试。'
