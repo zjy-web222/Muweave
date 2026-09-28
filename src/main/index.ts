@@ -29,6 +29,7 @@ import {
   buildScriptChatPrompt,
   parseDirector,
   parseScriptChatReply,
+  storyboardResponseJsonSchema,
 } from '../shared/director'
 import { Store, createProject } from './store'
 import { ChatGPT } from './chatgpt'
@@ -197,15 +198,22 @@ if (primary)
               project.shots.filter((shot) => shot.episodeId === c.episodeId).map((shot) => shot.id),
             )
             if (
-              store.jobs().some(
-                (job) =>
-                  job.projectId === c.projectId &&
-                  job.shotId &&
-                  shotIds.has(job.shotId) &&
-                  ['queued', 'running', 'submitting', 'downloading', 'paused', 'uncertain'].includes(
-                    job.status,
-                  ),
-              )
+              store
+                .jobs()
+                .some(
+                  (job) =>
+                    job.projectId === c.projectId &&
+                    job.shotId &&
+                    shotIds.has(job.shotId) &&
+                    [
+                      'queued',
+                      'running',
+                      'submitting',
+                      'downloading',
+                      'paused',
+                      'uncertain',
+                    ].includes(job.status),
+                )
             )
               throw new Error('请先处理此集镜头的未完成任务')
             store.update(c.projectId, (p) => {
@@ -351,7 +359,10 @@ if (primary)
           case 'generateText': {
             const p = store.project(c.projectId)
             if (!p.episodes.some((e) => e.id === c.episodeId)) throw new Error('集不存在')
-            text = await codex.generate(c.prompt || buildPrompt(p, c.episodeId, c.kind))
+            text = await codex.generate(
+              c.prompt || buildPrompt(p, c.episodeId, c.kind),
+              c.kind === 'storyboard' ? storyboardResponseJsonSchema : undefined,
+            )
             break
           }
           case 'shot':

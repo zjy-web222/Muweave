@@ -327,8 +327,18 @@ export function StoryboardDialog({
   const { run, notice } = useWorkspace()
   const [request, setRequest] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState('')
   const episode = p.episodes.find((item) => item.id === episodeId)
+  useEffect(() => {
+    if (!generating) return
+    const start = Date.now()
+    const timer = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+      1000,
+    )
+    return () => window.clearInterval(timer)
+  }, [generating])
   return (
     <Modal
       title={t('AI 生成分镜')}
@@ -353,6 +363,12 @@ export function StoryboardDialog({
             placeholder={t('例如：用 8 个镜头突出主角发现线索的悬念。')}
           />
         </Field>
+        {generating && (
+          <p className="small muted" role="status">
+            {t('正在连接并生成分镜，请保持窗口打开。')} {Math.floor(elapsed / 60)}:
+            {String(elapsed % 60).padStart(2, '0')}
+          </p>
+        )}
         {error && (
           <p className="danger small" role="alert">
             {error}
@@ -367,6 +383,7 @@ export function StoryboardDialog({
           primary
           disabled={generating}
           onClick={async () => {
+            setElapsed(0)
             setGenerating(true)
             setError('')
             try {

@@ -25,6 +25,38 @@ const shotInput = z.object({
   videoPrompt: z.string().default(''),
   characters: z.array(z.string()).default([]),
 })
+// The response constraint mirrors the shot fields accepted by shotInput. Keep
+// required fields explicit for Codex's strict JSON output, then validate with
+// the shared Zod parser before saving anything.
+const storyboardShotProperties = {
+  title: { type: 'string' },
+  scene: { type: 'string' },
+  action: { type: 'string' },
+  dialogue: { type: 'string' },
+  duration: { type: 'number' },
+  size: { type: 'string' },
+  camera: { type: 'string' },
+  lighting: { type: 'string' },
+  imagePrompt: { type: 'string' },
+  videoPrompt: { type: 'string' },
+  characters: { type: 'array', items: { type: 'string' } },
+}
+export const storyboardResponseJsonSchema = {
+  type: 'object',
+  properties: {
+    shots: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: storyboardShotProperties,
+        required: Object.keys(storyboardShotProperties),
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['shots'],
+  additionalProperties: false,
+}
 export const importSchema = z
   .object({
     script: z.string().optional(),
@@ -104,7 +136,9 @@ export function buildPrompt(
   assetId?: string,
 ) {
   const ep = p.episodes.find((e) => e.id === episodeId)
-  const context = `项目：${p.title}\n画幅：${p.aspect}\n视觉风格：${p.style}\n故事：${ep?.script || p.source}\n已确认资产：${p.assets.map((a) => `${a.kind} ${a.name}: ${a.description}`).join('\n')}`
+  const story = ep?.script || p.source
+  const storyboard = kind === 'storyboard'
+  const context = `项目：${p.title}\n画幅：${p.aspect}\n视觉风格：${p.style}\n故事：${storyboard ? story.slice(0, 30000) : story}${storyboard && story.length > 30000 ? '\n（剧本较长，以上仅包含前 30000 字。）' : ''}\n已确认资产：${(storyboard ? p.assets.slice(0, 100) : p.assets).map((a) => `${a.kind} ${a.name}: ${storyboard ? a.description.slice(0, 500) : a.description}`).join('\n')}`
   if (kind === 'image') {
     const a = p.assets.find((a) => a.id === assetId)
     return `${context}\n\n请直接生成一张${a ? '资产参考图' : '电影分镜图'}，无水印、无文字，保留角色和场景连续性。${a ? `${a.name}：${a.prompt || a.description}` : `${shot?.title}\n${shot?.imagePrompt || shot?.action}\n${shot?.size}；${shot?.camera}；${shot?.lighting}`}。参考图由我在本对话中附加。`
@@ -116,9 +150,10 @@ export function buildPrompt(
     storyboard:
       '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。',
   }[kind]
-  const shotExample = '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"对白/旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
+  const shotExample =
+    '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"对白/旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
   if (kind === 'storyboard')
-    return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：{"shots":[${shotExample}]}\n只返回本集分镜，不改写剧本或资产，不捏造已有素材和生成结果。`
+    return `${context}\n\n你是影视导演。${task}本次先覆盖主要情节，生成 6–12 个镜头；用户另有镜头数量要求时按用户要求，但单次不超过 24 个。需要更多镜头时可以继续追加。\n仅输出有效 JSON（不要解释）：{"shots":[${shotExample}]}\n只返回本集分镜，不改写剧本或资产，不捏造已有素材和生成结果。`
   return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：\n{"episodeTitle":"集标题","script":"完整剧本","assets":[{"kind":"character","name":"角色名","description":"外观与服装","prompt":"英文参考图提示词"}],"shots":[${shotExample}]}\n只返回本任务相关字段；不要捏造已有素材和生成结果。`
 }
 export function subtitleTime(seconds: number) {

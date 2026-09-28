@@ -55,7 +55,14 @@ async function command(args: string[], input?: string, timeoutMs = 300000) {
     })
     child.on('close', (code) => {
       clearTimeout(timer)
-      if (timedOut) reject(new Error('ChatGPT 回复超时，请稍后手动重试。'))
+      if (timedOut)
+        reject(
+          new Error(
+            /request timed out|reconnecting/i.test(stderr + stdout)
+              ? 'ChatGPT 连接持续超时，本次生成已停止。请检查网络后手动重试。'
+              : 'ChatGPT 长时间没有完成生成，本次生成已停止。请稍后手动重试。',
+          ),
+        )
       else resolve({ code, stdout, stderr })
     })
     if (input !== undefined) {
@@ -141,7 +148,9 @@ export class CodexText {
         ...(schemaPath ? ['--output-schema', schemaPath] : []),
         '-',
       ]
-      const result = await command(args, prompt)
+      // The CLI may retry a timed-out stream before falling back to HTTP. A full
+      // storyboard can take longer than the five-minute default command limit.
+      const result = await command(args, prompt, 15 * 60 * 1000)
       const final = codexFinalMessage(result.stdout)
       if (result.code !== 0 || !final)
         throw new Error(

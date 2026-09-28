@@ -10,6 +10,7 @@ import { prepareChatFile } from '../src/main/chat-files'
 import { exportArchive, restoreArchive, importMedia, Exporter } from '../src/main/media'
 import {
   buildScriptChatPrompt,
+  buildPrompt,
   parseDirector,
   storyboardImport,
   parseScriptChatReply,
@@ -87,6 +88,14 @@ describe('local project state', () => {
     expect(() => storyboardImport('{"script":"only a script"}')).toThrow('AI 未返回分镜镜头')
     expect(toSrt(p.shots)).toContain('00:00:06,000 --> 00:00:11,000')
     expect(escapeHtml('<script>')).toBe('&lt;script&gt;')
+  })
+  it('keeps storyboard requests bounded for longer episodes', () => {
+    const p = createProject('A', '16:9', false)
+    p.episodes[0].script = 'A'.repeat(30000) + 'TAIL_MARKER'
+    const prompt = buildPrompt(p, p.episodes[0].id, 'storyboard')
+    expect(prompt).toContain('A'.repeat(30000))
+    expect(prompt).not.toContain('TAIL_MARKER')
+    expect(prompt).toContain('单次不超过 24 个')
   })
   it('keeps legacy episodes compatible and validates multi-turn script replies', () => {
     const p = createProject('A', '16:9')

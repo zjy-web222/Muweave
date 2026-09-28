@@ -344,6 +344,7 @@ export const en: Record<string, string> = {
     'For example: use eight shots to build suspense as the lead finds a clue.',
   生成分镜: 'Generate shots',
   '正在生成分镜…': 'Generating shots…',
+  '正在连接并生成分镜，请保持窗口打开。': 'Connecting and generating shots. Keep this window open.',
   分镜已追加到当前集: 'Shots added to the current episode',
   'AI 未返回分镜镜头，请修改要求后重试。':
     'The AI did not return any shots. Adjust the direction and try again.',
