@@ -419,6 +419,22 @@ if (primary)
                 p.assets[index] = { ...c.asset, selectedMediaId: p.assets[index].selectedMediaId }
             })
             break
+          case 'uploadAssetImage': {
+            store.project(c.projectId)
+            const file = await chooseFile(['png', 'jpg', 'jpeg', 'webp'])
+            if (!file) break
+            const asset = {
+              id: randomUUID(),
+              kind: c.kind,
+              name: basename(file, extname(file)).slice(0, 200).trim() || '未命名资产',
+              description: '',
+              prompt: '',
+            }
+            await importMedia(store, c.projectId, asset.id, 'reference', file, '', undefined, asset)
+            text = asset.id
+            message = '资产图片已上传'
+            break
+          }
           case 'deleteAsset':
             store.update(c.projectId, (p) => {
               p.assets = p.assets.filter((a) => a.id !== c.assetId)
@@ -636,14 +652,9 @@ if (primary)
                 )
             )
               throw new Error('此项目还有未完成任务')
-            const file = await chooseSave(
-              `${store.project(c.projectId).title}-backup.director.zip`,
-              ['zip'],
-            )
-            if (!file) break
-            await exportArchive(store, c.projectId, file)
+            store.project(c.projectId)
             store.db.prepare('DELETE FROM projects WHERE id=?').run(c.projectId)
-            message = '已备份并从项目列表移除，原素材目录仍保留'
+            message = '项目已从列表移除，原素材目录仍保留'
             break
           }
         }

@@ -30,8 +30,12 @@ try {
   await page.screenshot({ path: join(evidence, '01-welcome.png') })
   await page.getByRole('button', { name: '探索示例项目' }).click()
   await page.getByRole('heading', { name: '故事在这里，成为画面。' }).waitFor()
+  await page.locator('.shot-list article').first().waitFor()
+  assert.match(await page.getByRole('button', { name: '列表', exact: true }).getAttribute('class'), /active/)
+  await page.screenshot({ path: join(evidence, '02-director-list.png') })
+  await page.getByRole('button', { name: '画布', exact: true }).click()
   await page.locator('.canvas-card').first().waitFor()
-  await page.screenshot({ path: join(evidence, '02-director-canvas.png') })
+  await page.getByRole('button', { name: '列表', exact: true }).click()
   const title = page.getByLabel('镜头标题')
   await title.fill('桌面测试 · 已保存的镜头')
   await page.getByRole('button', { name: '保存', exact: true }).click()
@@ -169,6 +173,40 @@ try {
   await page.getByRole('button', { name: '资产库 02' }).click()
   await page.getByRole('heading', { name: '让每次生成，都属于同一个世界。' }).waitFor()
   await page.screenshot({ path: join(evidence, '04-assets.png') })
+  const assetFixture = join(data, 'uploaded-character.png')
+  await writeFile(
+    assetFixture,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+      'base64',
+    ),
+  )
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
+  }, assetFixture)
+  await page.getByRole('button', { name: '上传资产图片' }).click()
+  await page.getByRole('dialog', { name: '上传资产图片' }).getByRole('combobox', { name: '类型' }).selectOption('location')
+  await page.getByRole('button', { name: '选择图片上传' }).click()
+  await page.getByRole('dialog', { name: '上传资产图片' }).waitFor({ state: 'hidden' })
+  await page.locator('.asset-card').filter({ hasText: 'uploaded-character' }).waitFor()
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  const uploadedAsset = snapshot.state.projects[0].assets.find((a) => a.name === 'uploaded-character')
+  assert.equal(uploadedAsset.kind, 'location')
+  assert(snapshot.state.projects[0].media.some((m) => m.id === uploadedAsset.selectedMediaId))
+  assert.equal(
+    await page.evaluate(
+      ({ pid, mid }) =>
+        new Promise((resolve) => {
+          const image = new Image()
+          image.onload = () => resolve(image.naturalWidth)
+          image.onerror = () => resolve(0)
+          image.src = `media://asset/${pid}/${mid}`
+        }),
+      { pid: project.id, mid: uploadedAsset.selectedMediaId },
+    ),
+    1,
+  )
+  await page.screenshot({ path: join(evidence, '04-assets-upload.png') })
   await page.getByRole('button', { name: '连接与设置', exact: true }).click()
   await page.getByRole('dialog', { name: '连接与偏好设置' }).waitFor()
   await page.screenshot({ path: join(evidence, '05-provider-settings.png') })
@@ -191,7 +229,7 @@ try {
     { pid: project.id, sid: shot.id },
   )
   assert(imported.ok)
-  const mediaId = imported.state.projects[0].media[0].id
+  const mediaId = imported.state.projects[0].media.find((m) => m.ownerId === shot.id && m.slot === 'first').id
   const load = await page.evaluate(
     async ({ pid, mid }) =>
       new Promise((resolve) => {
@@ -218,28 +256,19 @@ try {
   const restored = await page.evaluate(() => window.director.command({ type: 'importArchive' }))
   assert(restored.ok, restored.error)
   assert.equal(restored.state.projects.length, 2)
-  assert.equal(restored.state.projects[0].media.length, 1)
+  assert.equal(restored.state.projects[0].media.length, 2)
   const restoredProject = restored.state.projects.find((item) => item.id !== project.id)
   await app.evaluate(({ dialog }) => {
-    dialog.showSaveDialog = async () => ({ canceled: true })
+    dialog.showSaveDialog = async () => { throw new Error('Project removal must not open a backup dialog') }
   })
   await page.locator('.project-nav').getByRole('button', { name: restoredProject.title, exact: true }).click()
   await page.locator('.project-nav').getByRole('button', { name: `移除项目 ${restoredProject.title}` }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
   await page.getByRole('dialog').waitFor({ state: 'hidden' })
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
-  assert.equal(snapshot.state.projects.length, 2, 'canceling the backup keeps the project')
-  const removedArchive = join(data, 'removed-project.director.zip')
-  await app.evaluate(({ dialog }, file) => {
-    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file })
-  }, removedArchive)
-  await page.locator('.project-nav').getByRole('button', { name: `移除项目 ${restoredProject.title}` }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
-  await page.getByRole('dialog').waitFor({ state: 'hidden' })
-  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   assert.equal(snapshot.state.projects.length, 1)
   assert.equal(snapshot.state.projects[0].id, project.id)
-  assert((await stat(removedArchive)).size > 0)
+  assert((await stat(join(data, 'library', 'projects', restoredProject.id, restoredProject.media[0].file))).size > 0)
   await page
     .getByRole('group', { name: '界面主题' })
     .getByRole('button', { name: '深色 · Graphite' })
@@ -328,18 +357,19 @@ try {
         passed: true,
         checks: [
           'welcome',
-          'canvas',
+          'default list and canvas switch',
           'shot edit',
           'script edit',
           'episode switching and unsaved draft persistence',
           'project-wide chat and cross-episode script apply',
           'any-extension attachment picker',
           'assets',
+          'asset image upload',
           'settings',
           'language and theme switching',
           'media import and protocol',
           'archive roundtrip',
-          'project backup and removal',
+          'project removal without backup prompt',
           'dark mode',
           '1120px desktop',
           'restart persistence',

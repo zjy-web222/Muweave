@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { zip, unzip, strToU8, strFromU8 } from 'fflate'
 import { Store, inside } from './store'
-import { projectSchema, type Media, type Project } from '../shared/schema'
+import { projectSchema, type Asset, type Media, type Project } from '../shared/schema'
 import { escapeHtml, toSrt } from '../shared/director'
 
 const extensions = {
@@ -50,9 +50,16 @@ export async function importMedia(
   file: string,
   prompt = '',
   taskId?: string,
+  newAsset?: Asset,
 ) {
   const p = store.project(projectId)
-  if (!p.shots.some((s) => s.id === ownerId) && !p.assets.some((a) => a.id === ownerId))
+  if (newAsset && (newAsset.id !== ownerId || slot !== 'reference'))
+    throw new Error('素材类型与当前插槽不匹配')
+  if (
+    !p.shots.some((s) => s.id === ownerId) &&
+    !p.assets.some((a) => a.id === ownerId) &&
+    newAsset?.id !== ownerId
+  )
     throw new Error('素材所属镜头或资产已不存在')
   const kind = mediaKind(file)
   if (
@@ -65,7 +72,8 @@ export async function importMedia(
   const id = randomUUID(),
     relative = `media/${id}${extname(file).toLowerCase()}`
   await mkdir(store.file(projectId, 'media'), { recursive: true })
-  await copyFile(file, store.file(projectId, relative))
+  const destination = store.file(projectId, relative)
+  await copyFile(file, destination)
   const m: Media = {
     id,
     kind,
@@ -77,10 +85,19 @@ export async function importMedia(
     taskId,
     createdAt: new Date().toISOString(),
   }
-  store.update(projectId, (p) => {
-    p.media.push(m)
-    activate(p, m)
-  })
+  try {
+    store.update(projectId, (p) => {
+      if (newAsset) {
+        if (p.assets.some((asset) => asset.id === newAsset.id)) throw new Error('资产已存在')
+        p.assets.push(newAsset)
+      }
+      p.media.push(m)
+      activate(p, m)
+    })
+  } catch (error) {
+    await rm(destination, { force: true })
+    throw error
+  }
   return m
 }
 export async function downloadVideo(

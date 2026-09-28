@@ -15,13 +15,12 @@ export const en: Record<string, string> = {
   新建项目: 'New project',
   工作空间: 'Workspace',
   还没有项目: 'No projects yet',
-  备份并移除项目: 'Back up and remove project',
   移除项目: 'Remove project',
   移除分集: 'Remove episode',
   '此集的剧本、对话与镜头会从项目中移除；素材文件和历史版本仍保留。':
     'This episode’s script, conversations, and shots will be removed from the project. Media files and version history remain.',
-  '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。':
-    'Choose where to save a ZIP backup. The project will then be removed from the list; original media files remain. Canceling the save keeps the project.',
+  '项目会从列表移除，原素材目录仍保留。此操作不会自动备份。':
+    'The project will be removed from the list. Original media files remain; no backup is created automatically.',
   '开发版界面与主进程版本不一致，请重启应用后重试。':
     'The development UI and app process are out of sync. Restart the app and try again.',
   '当前项目 / 分集': 'Current project / Episodes',
@@ -364,12 +363,17 @@ export const en: Record<string, string> = {
   '建立稳定的人物、场景与道具参考，关联到每一个镜头。':
     'Build consistent character, location, and prop references for every shot.',
   新建资产: 'New asset',
+  上传资产图片: 'Upload asset image',
+  选择图片上传: 'Choose image to upload',
+  '正在上传…': 'Uploading…',
+  '支持 PNG、JPG 和 WebP；文件名将作为资产名称。':
+    'Supports PNG, JPG, and WebP. The filename becomes the asset name.',
   全部资产: 'All assets',
   生成参考图: 'Create reference image',
   导入参考图: 'Import reference image',
   '这个世界，等待你的设定': 'Your world is ready to take shape',
-  '手动新建资产，或在剧本页用 ChatGPT 提取人物与场景。':
-    'Add assets manually or extract characters and locations with ChatGPT from the script.',
+  '上传参考图片、新建资产，或在剧本页用 ChatGPT 提取人物与场景。':
+    'Upload a reference image, create an asset, or extract characters and locations with ChatGPT from the script.',
   新建视觉资产: 'New visual asset',
   类型: 'Type',
   名称: 'Name',
@@ -443,8 +447,9 @@ export const en: Record<string, string> = {
     'Restored as a new project. Old tasks will not run automatically.',
   导出完成: 'Export complete',
   '已恢复历史版本，素材版本仍保留': 'Historical version restored. Media versions are kept.',
-  '已备份并从项目列表移除，原素材目录仍保留':
-    'Project backed up and removed from the list. Original media folder is kept.',
+  '项目已从列表移除，原素材目录仍保留':
+    'Project removed from the list. Original media folder is kept.',
+  资产图片已上传: 'Asset image uploaded',
   操作失败: 'Action failed',
   不允许的调用来源: 'Call origin is not allowed',
   集不存在: 'Episode not found',

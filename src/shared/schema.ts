@@ -230,6 +230,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('deleteShot'), ...pid, shotId: id }),
   z.object({ type: z.literal('reorder'), ...pid, shotId: id, delta: z.enum(['up', 'down']) }),
   z.object({ type: z.literal('asset'), ...pid, asset: assetSchema }),
+  z.object({ type: z.literal('uploadAssetImage'), ...pid, kind: assetSchema.shape.kind }),
   z.object({ type: z.literal('deleteAsset'), ...pid, assetId: id }),
   z.object({
     type: z.literal('layout'),

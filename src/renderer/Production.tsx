@@ -380,7 +380,9 @@ export function AssetsView({ p, onGenerate }: { p: Project; onGenerate: (a: Asse
   const t = useT()
   const { run } = useWorkspace(),
     [kind, setKind] = useState<'all' | Asset['kind']>('all'),
-    [draft, setDraft] = useState<Asset | null>(null)
+    [draft, setDraft] = useState<Asset | null>(null),
+    [uploadKind, setUploadKind] = useState<Asset['kind'] | null>(null),
+    [uploading, setUploading] = useState(false)
   const labels = { character: t('角色'), location: t('场景'), prop: t('道具') },
     icons = {
       character: <UserRound size={17} />,
@@ -395,21 +397,27 @@ export function AssetsView({ p, onGenerate }: { p: Project; onGenerate: (a: Asse
           <h1>{t('让每次生成，都属于同一个世界。')}</h1>
           <p>{t('建立稳定的人物、场景与道具参考，关联到每一个镜头。')}</p>
         </div>
-        <Button
-          primary
-          onClick={() =>
-            setDraft({
-              id: crypto.randomUUID(),
-              kind: 'character',
-              name: '',
-              description: '',
-              prompt: '',
-            })
-          }
-        >
-          <Plus size={15} />
-          {t('新建资产')}
-        </Button>
+        <div className="asset-heading-actions">
+          <Button onClick={() => setUploadKind('character')}>
+            <Upload size={15} />
+            {t('上传资产图片')}
+          </Button>
+          <Button
+            primary
+            onClick={() =>
+              setDraft({
+                id: crypto.randomUUID(),
+                kind: 'character',
+                name: '',
+                description: '',
+                prompt: '',
+              })
+            }
+          >
+            <Plus size={15} />
+            {t('新建资产')}
+          </Button>
+        </div>
       </div>
       <div className="filter-tabs">
         {(['all', 'character', 'location', 'prop'] as const).map((k) => (
@@ -467,8 +475,56 @@ export function AssetsView({ p, onGenerate }: { p: Project; onGenerate: (a: Asse
       </div>
       {!p.assets.length && (
         <Empty icon={<UserRound size={30} />} heading={t('这个世界，等待你的设定')}>
-          {t('手动新建资产，或在剧本页用 ChatGPT 提取人物与场景。')}
+          {t('上传参考图片、新建资产，或在剧本页用 ChatGPT 提取人物与场景。')}
         </Empty>
+      )}
+      {uploadKind && (
+        <Modal title={t('上传资产图片')} onClose={() => !uploading && setUploadKind(null)}>
+          <div className="modal-body">
+            <Field label={t('类型')}>
+              <select
+                value={uploadKind}
+                disabled={uploading}
+                onChange={(e) => setUploadKind(e.target.value as Asset['kind'])}
+              >
+                {Object.entries(labels).map(([value, label]) => (
+                  <option value={value} key={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <p className="small muted">{t('支持 PNG、JPG 和 WebP；文件名将作为资产名称。')}</p>
+          </div>
+          <div className="modal-footer">
+            <Button disabled={uploading} onClick={() => setUploadKind(null)}>
+              {t('返回')}
+            </Button>
+            <Button
+              primary
+              disabled={uploading}
+              onClick={async () => {
+                setUploading(true)
+                try {
+                  const result = await run({
+                    type: 'uploadAssetImage',
+                    projectId: p.id,
+                    kind: uploadKind,
+                  })
+                  if (result.ok && result.text) {
+                    setKind(uploadKind)
+                    setUploadKind(null)
+                  }
+                } finally {
+                  setUploading(false)
+                }
+              }}
+            >
+              <Upload size={14} />
+              {uploading ? t('正在上传…') : t('选择图片上传')}
+            </Button>
+          </div>
+        </Modal>
       )}
       {draft && (
         <Modal title={draft.name || t('新建视觉资产')} onClose={() => setDraft(null)}>

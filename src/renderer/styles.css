@@ -1176,6 +1176,13 @@ small,
   color: var(--muted);
   font-size: 12px;
 }
+.asset-heading-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .script-view,
 .assets-view,
 .cut-view {

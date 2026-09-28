@@ -79,7 +79,7 @@ function App() {
     [epid, setEpid] = useState(''),
     [selected, setSelected] = useState(''),
     [stage, setStage] = useState<Stage>('board'),
-    [view, setView] = useState<'canvas' | 'list'>('canvas'),
+    [view, setView] = useState<'canvas' | 'list'>('list'),
     [inspector, setInspector] = useState(true),
     [query, setQuery] = useState(''),
     [toast, setToast] = useState(''),
@@ -254,10 +254,8 @@ function App() {
                     title={`${t('移除项目')} ${project.title}`}
                     onClick={() =>
                       setConfirm({
-                        title: `${t('备份并移除项目')}「${project.title}」？`,
-                        text: t(
-                          '选择 ZIP 备份位置后，项目会从列表移除；原素材目录仍保留。取消保存则不会删除项目。',
-                        ),
+                        title: `${t('移除项目')}「${project.title}」？`,
+                        text: t('项目会从列表移除，原素材目录仍保留。此操作不会自动备份。'),
                         run: async () => {
                           const r = await run({ type: 'deleteProject', projectId: project.id })
                           if (
