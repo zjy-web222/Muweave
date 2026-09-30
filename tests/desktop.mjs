@@ -115,6 +115,9 @@ try {
   await page.getByLabel('剧本正文').fill('第二集未手动保存的草稿。')
   await page.getByRole('button', { name: '上一集' }).click()
   await page.waitForFunction(
+    () => document.querySelector('.script-episode-switch span')?.textContent?.trim() === '1 / 2',
+  )
+  await page.waitForFunction(
     () => document.querySelector('[aria-label="剧本正文"]')?.value === '新版悬念剧本。',
   )
   assert.equal(await page.getByLabel('剧本正文').inputValue(), '新版悬念剧本。')
@@ -218,6 +221,9 @@ try {
   await page.screenshot({ path: join(evidence, '04-assets-upload.png') })
   await page.getByRole('button', { name: '连接与设置', exact: true }).click()
   await page.getByRole('dialog', { name: '连接与偏好设置' }).waitFor()
+  assert.equal(await page.getByText('已内置指定工作流，使用 RunningHub 中国站 Plus 模式。').count(), 1)
+  assert.equal(await page.getByRole('textbox', { name: 'Workflow ID' }).count(), 0)
+  assert.equal(await page.getByText('参数映射').count(), 0)
   await page.screenshot({ path: join(evidence, '05-provider-settings.png') })
   await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
   await page.getByRole('button', { name: '导演台 03' }).click()

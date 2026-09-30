@@ -18,6 +18,7 @@ import { ZodError } from 'zod'
 import {
   commandSchema,
   configSchema,
+  videoWorkflow,
   id,
   shotSchema,
   type Reply,
@@ -559,6 +560,12 @@ if (primary)
             })
             break
           case 'config': {
+            const config = configSchema.parse({
+              ...c.config,
+              site: videoWorkflow.site,
+              workflowId: videoWorkflow.id,
+              mappings: [],
+            })
             if (c.key?.trim()) {
               if (!safeStorage.isEncryptionAvailable())
                 throw new Error('操作系统凭据加密不可用，未保存 API Key')
@@ -567,10 +574,7 @@ if (primary)
                 safeStorage.encryptString(c.key.trim()).toString('base64'),
               )
             }
-            const unique = new Set(c.config.mappings.map((m) => `${m.nodeId}:${m.fieldName}`))
-            if (unique.size !== c.config.mappings.length)
-              throw new Error('一个节点字段只能映射一次')
-            store.set('config', configSchema.parse(c.config))
+            store.set('config', config)
             message = '设置已保存，Key 不会进入项目存档'
             break
           }
@@ -578,11 +582,11 @@ if (primary)
             store.set('runninghub-key', '')
             break
           case 'testConnection':
-            text = JSON.stringify(await api.account(store.config()), null, 2)
+            text = JSON.stringify(await api.account({ ...store.config(), site: videoWorkflow.site }), null, 2)
             message = 'RunningHub 连接成功'
             break
           case 'workflow':
-            text = JSON.stringify(await api.workflow(store.config()), null, 2)
+            text = JSON.stringify(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }), null, 2)
             break
           case 'queue':
             if (!key()) throw new Error('请先绑定 RunningHub Key')

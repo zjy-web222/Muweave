@@ -189,6 +189,8 @@ export const en: Record<string, string> = {
   '打开 / 登录': 'Open / Sign in',
   退出并清除本应用登录记录: 'Sign out and clear this app’s session',
   'RunningHub 工作流': 'RunningHub workflow',
+  '已内置指定工作流，使用 RunningHub 中国站 Plus 模式。':
+    'The specified workflow is built in and runs on RunningHub China in Plus mode.',
   站点: 'Site',
   '中国 · runninghub.cn': 'China · runninghub.cn',
   '复制工作流的数字 ID': 'Paste the numeric workflow ID',

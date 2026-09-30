@@ -2,7 +2,6 @@ import { useT } from './i18n'
 import { useEffect, useState } from 'react'
 import {
   Plus,
-  Trash2,
   Copy,
   ArrowUpRight,
   KeyRound,
@@ -13,7 +12,7 @@ import {
   Braces,
   CheckCircle2,
 } from 'lucide-react'
-import { type Config, type Project, type Shot, type Mapping } from '../shared/schema'
+import { type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
 import { buildPrompt, parseDirector, storyboardImport } from '../shared/director'
 import { Button, Field, Modal, useWorkspace } from './ui'
 
@@ -433,18 +432,16 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     })
   }, [run])
   const patch = (v: Partial<Config>) => setC((o) => ({ ...o, ...v }))
-  const mapping = (index: number, value: Partial<Mapping>) =>
-    patch({ mappings: c.mappings.map((m, i) => (i === index ? { ...m, ...value } : m)) })
   async function save() {
     const r = await run({ type: 'config', config: c, ...(key.trim() ? { key } : {}) })
     if (r.ok) setKey('')
     return r.ok
   }
-  async function test(type: 'workflow' | 'testConnection') {
+  async function test() {
     setBusy(true)
     try {
       if (await save()) {
-        const r = await run({ type })
+        const r = await run({ type: 'testConnection' })
         setOutput(r.ok ? r.text || r.message || t('完成') : r.error)
       }
     } finally {
@@ -516,24 +513,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <h3>
             <KeyRound size={17} /> {t('RunningHub 工作流')}
           </h3>
-          <div className="field-row">
-            <Field label={t('站点')}>
-              <select
-                value={c.site}
-                onChange={(e) => patch({ site: e.target.value as Config['site'] })}
-              >
-                <option value="https://www.runninghub.ai">Global · runninghub.ai</option>
-                <option value="https://www.runninghub.cn">{t('中国 · runninghub.cn')}</option>
-              </select>
-            </Field>
-            <Field label="Workflow ID">
-              <input
-                value={c.workflowId}
-                onChange={(e) => patch({ workflowId: e.target.value.replace(/\D/g, '') })}
-                placeholder={t('复制工作流的数字 ID')}
-              />
-            </Field>
-          </div>
+          <p className="small muted">{t('已内置指定工作流，使用 RunningHub 中国站 Plus 模式。')}</p>
+          <p className="small muted break">{t('工作流：')}{videoWorkflow.id}</p>
           <Field
             label={`API Key ${state.hasKey ? t('· 已安全保存') : ''}`}
             hint={t('留空保留原 Key。Key 不回传到界面，不进入 ZIP 存档。')}
@@ -549,93 +530,13 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             />
           </Field>
           <div className="field-row">
-            <Button disabled={busy} onClick={() => void test('testConnection')}>
+            <Button disabled={busy} onClick={() => void test()}>
               {t('测试连接')}
-            </Button>
-            <Button disabled={busy || !c.workflowId} onClick={() => void test('workflow')}>
-              {t('读取工作流节点')}
             </Button>
             {state.hasKey && (
               <Button onClick={() => void run({ type: 'clearKey' })}>{t('解绑 Key')}</Button>
             )}
           </div>
-          <div className="section-label">
-            <span>{t('参数映射')}</span>
-            <Button
-              onClick={() =>
-                patch({
-                  mappings: [
-                    ...c.mappings,
-                    { nodeId: '', fieldName: '', source: 'prompt', value: '' },
-                  ],
-                })
-              }
-            >
-              <Plus size={13} />
-              {t('添加字段')}
-            </Button>
-          </div>
-          <p className="small muted">
-            {t(
-              '填入工作流真实的节点 ID 与字段名。例如：提示词 → text，首帧 → image。不会猜测你的节点编号。',
-            )}
-          </p>
-          <div className="mapping-header">
-            <span>{t('节点 ID')}</span>
-            <span>{t('字段名')}</span>
-            <span>{t('镜头数据来源')}</span>
-            <span />
-          </div>
-          {c.mappings.map((m, i) => (
-            <div className="mapping-row" key={i}>
-              <input
-                aria-label={`${t('节点 ID')} ${i + 1}`}
-                value={m.nodeId}
-                onChange={(e) => mapping(i, { nodeId: e.target.value.replace(/\D/g, '') })}
-                placeholder="12"
-              />
-              <input
-                aria-label={`${t('字段名')} ${i + 1}`}
-                value={m.fieldName}
-                onChange={(e) => mapping(i, { fieldName: e.target.value })}
-                placeholder="text"
-              />
-              <select
-                aria-label={`${t('映射来源')} ${i + 1}`}
-                value={m.source}
-                onChange={(e) => mapping(i, { source: e.target.value as Mapping['source'] })}
-              >
-                {Object.entries({
-                  prompt: t('视频提示词'),
-                  first: t('首帧图片'),
-                  last: t('尾帧图片'),
-                  seed: t('随机种子'),
-                  duration: t('时长（秒）'),
-                  fixed: t('固定值'),
-                }).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="icon-button"
-                aria-label={`${t('删除映射')} ${i + 1}`}
-                onClick={() => patch({ mappings: c.mappings.filter((_, n) => n !== i) })}
-              >
-                <Trash2 size={14} />
-              </button>
-              {m.source === 'fixed' && (
-                <input
-                  className="fixed-value"
-                  aria-label={`${t('固定值')} ${i + 1}`}
-                  value={m.value}
-                  onChange={(e) => mapping(i, { value: e.target.value })}
-                  placeholder={t('固定值（按工作流字段格式填写）')}
-                />
-              )}
-            </div>
-          ))}
           {output && <pre className="api-output">{output}</pre>}
           <Field label={t('同时运行的视频任务')}>
             <select

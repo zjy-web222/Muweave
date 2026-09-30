@@ -17,11 +17,12 @@ import {
   toSrt,
   escapeHtml,
 } from '../src/shared/director'
-import { Queue, RunningHub, RejectedRequest, inputsChanged } from '../src/main/runninghub'
+import { Queue, RunningHub, RejectedRequest, inputsChanged, prepareVideoWorkflow } from '../src/main/runninghub'
 import {
   blankShot,
   commandSchema,
   defaultConfig,
+  videoWorkflow,
   projectSchema,
   type Job,
 } from '../src/shared/schema'
@@ -324,6 +325,46 @@ async function settle() {
   for (let i = 0; i < 12; i++) await Promise.resolve()
 }
 describe('safe paid-job lifecycle', () => {
+  it('uses the built-in China workflow and Plus for new jobs even with old settings', () => {
+    const p = store.save(createProject('fixed workflow', '16:9', true))
+    store.set('config', { ...defaultConfig, site: 'https://www.runninghub.ai', workflowId: '123', paused: true })
+    const q = new Queue(store, {} as RunningHub, () => {})
+    q.enqueue(p.id, [p.shots[0].id], false)
+    expect(store.jobs()[0]).toMatchObject({
+      site: videoWorkflow.site,
+      workflowId: videoWorkflow.id,
+      instanceType: 'plus',
+      aspect: '16:9',
+      mappings: [],
+    })
+  })
+  it('prepares prompt, frame count, aspect, seed, and optional image inputs', () => {
+    const shot = { ...blankShot('episode'), videoPrompt: 'Rain over a city', duration: 5, seed: 77 }
+    const source = {
+      '15': { class_type: 'ResolutionSelector', inputs: { aspect_ratio: '9:16 (Portrait Widescreen)' } },
+      '16': { class_type: 'RandomNoise', inputs: { noise_seed: 1 } },
+      '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: 'old', length: ['14', 0], width: ['15', 0], height: ['15', 1] } },
+    }
+    const result = prepareVideoWorkflow(source, shot, '16:9', { first: 'first.png', last: 'last.png' })
+    expect(result['17'].inputs).toMatchObject({ prompt: 'Rain over a city', length: 124, first_frame: ['18', 0], last_frame: ['19', 0] })
+    expect(result['15'].inputs.aspect_ratio).toBe('16:9 (Widescreen)')
+    expect(result['16'].inputs.noise_seed).toBe(77)
+    expect(result['18']).toMatchObject({ class_type: 'LoadImage', inputs: { image: 'first.png' } })
+    expect(source['17'].inputs.prompt).toBe('old')
+    expect(() => prepareVideoWorkflow({}, shot, '16:9')).toThrow('视频节点已变化')
+  })
+  it('sends the complete workflow as JSON and selects Plus', async () => {
+    const j = makeJob()
+    j.instanceType = 'plus'
+    const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, data: { taskId: '987' } }), { status: 200 }))
+    const api = new RunningHub(() => 'local-test-key', transport)
+    expect(await api.start(j, [], { '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: 'test' } } })).toBe('987')
+    const [url, options] = transport.mock.calls[0]
+    const body = JSON.parse(options.body)
+    expect(url).toBe(`${j.site}/task/openapi/create`)
+    expect(body).toMatchObject({ instanceType: 'plus', workflowId: j.workflowId, apiKey: 'local-test-key' })
+    expect(JSON.parse(body.workflow)['17'].inputs.prompt).toBe('test')
+  })
   it('never resubmits an interrupted submission when restarting', async () => {
     const j = makeJob('submitting')
     store.saveJob(j)

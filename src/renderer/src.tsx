@@ -39,6 +39,7 @@ import {
   type Reply,
   type Shot,
   type Snapshot,
+  videoWorkflow,
 } from '../shared/schema'
 import { Button, Empty, Modal, Field, Preview, Workspace, Working } from './ui'
 import Canvas from './Canvas'
@@ -869,7 +870,7 @@ function App() {
               </Field>
               <p className="small muted">
                 {t('工作流：')}
-                {state.config.workflowId || t('尚未设置')} {t('· 并发')} {state.config.concurrency}{' '}
+                {videoWorkflow.id} · Plus {t('· 并发')} {state.config.concurrency}{' '}
                 {t('· 当前选择')} {batch.length} {t('镜头')}
               </p>
               {!state.hasKey && (

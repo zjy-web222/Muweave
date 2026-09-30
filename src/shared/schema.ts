@@ -116,6 +116,11 @@ export const mappingSchema = z.object({
   value: z.string().max(5000).default(''),
 })
 export type Mapping = z.infer<typeof mappingSchema>
+export const videoWorkflow = {
+  site: 'https://www.runninghub.cn',
+  id: '2105215916815511553',
+  instanceType: 'plus',
+} as const
 export const configSchema = z.object({
   site: z.enum(['https://www.runninghub.ai', 'https://www.runninghub.cn']),
   workflowId: z.string().regex(/^\d*$/).max(100),
@@ -128,8 +133,8 @@ export const configSchema = z.object({
 })
 export type Config = z.infer<typeof configSchema>
 export const defaultConfig: Config = {
-  site: 'https://www.runninghub.ai',
-  workflowId: '',
+  site: videoWorkflow.site,
+  workflowId: videoWorkflow.id,
   mappings: [],
   concurrency: 1,
   ffmpeg: 'ffmpeg',
@@ -157,6 +162,8 @@ export const jobSchema = z.object({
   taskId: z.string().optional(),
   site: z.string(),
   workflowId: z.string(),
+  instanceType: z.literal('plus').optional(),
+  aspect: projectSchema.shape.aspect.optional(),
   mappings: z.array(mappingSchema),
   snapshot: shotSchema,
   createdAt: z.string(),

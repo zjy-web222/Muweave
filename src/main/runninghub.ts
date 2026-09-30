@@ -2,7 +2,7 @@ import { readFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { z } from 'zod'
-import { type Job, type Config, type Shot } from '../shared/schema'
+import { type Job, type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
 import { Store } from './store'
 import { downloadVideo, importMedia } from './media'
 
@@ -12,6 +12,52 @@ const envelope = z.object({
   data: z.unknown().optional(),
 })
 export class RejectedRequest extends Error {}
+type ApiNode = { class_type: string; inputs: Record<string, unknown>; _meta?: Record<string, unknown> }
+type ApiWorkflow = Record<string, ApiNode>
+const apiWorkflowSchema = z.record(
+  z.string(),
+  z.object({ class_type: z.string(), inputs: z.record(z.string(), z.unknown()) }).passthrough(),
+)
+export function prepareVideoWorkflow(
+  source: unknown,
+  shot: Shot,
+  aspect: Project['aspect'],
+  frames: { first?: string; last?: string } = {},
+): ApiWorkflow {
+  const graph = structuredClone(apiWorkflowSchema.parse(source)) as ApiWorkflow
+  const video = graph['17']
+  if (video?.class_type !== 'MiniMaxH3ImageToVideo')
+    throw new Error('指定工作流的视频节点已变化，请核对 RunningHub 工作流')
+  const prompt = shot.videoPrompt.trim() || shot.action.trim()
+  if (!prompt) throw new Error(`${shot.title} 缺少视频提示词或镜头动作`)
+  video.inputs.prompt = prompt
+  // The supplied workflow uses 24 fps and rounds frame count to 17n + 5.
+  const requestedFrames = Math.max(5, Math.round(shot.duration * 24))
+  video.inputs.length = requestedFrames + ((5 - (requestedFrames % 17)) % 17)
+  const resolution = graph['15']
+  const aspectValue = {
+    '16:9': '16:9 (Widescreen)',
+    '9:16': '9:16 (Portrait Widescreen)',
+    '1:1': '1:1 (Square)',
+  }[aspect]
+  if (resolution?.class_type === 'ResolutionSelector') {
+    resolution.inputs.aspect_ratio = aspectValue
+  } else {
+    // API exports may inline front-end selector values into the video node.
+    const ratio = aspect === '16:9' ? 16 / 9 : aspect === '9:16' ? 9 / 16 : 1
+    video.inputs.width = Math.max(32, Math.round(Math.sqrt(400000 * ratio) / 32) * 32)
+    video.inputs.height = Math.max(32, Math.round(Math.sqrt(400000 / ratio) / 32) * 32)
+  }
+  if (graph['16']?.class_type === 'RandomNoise') graph['16'].inputs.noise_seed = shot.seed
+  let nextId = Math.max(0, ...Object.keys(graph).map(Number).filter(Number.isFinite)) + 1
+  for (const [slot, fileName] of Object.entries(frames) as ['first' | 'last', string][]) {
+    if (!fileName) continue
+    const nodeId = String(nextId++)
+    graph[nodeId] = { class_type: 'LoadImage', inputs: { image: fileName } }
+    video.inputs[slot === 'first' ? 'first_frame' : 'last_frame'] = [nodeId, 0]
+  }
+  return graph
+}
 export class RunningHub {
   constructor(
     private key: () => string,
@@ -41,13 +87,13 @@ export class RunningHub {
       )
     return result.data
   }
-  async workflow(c: Config) {
+  async workflow(c: { site: string; workflowId: string }) {
     if (!c.workflowId) throw new Error('请填写 workflowId')
     const result = await this.request(c.site, '/api/openapi/getJsonApiFormat', {
       workflowId: c.workflowId,
     })
     const data = z.object({ prompt: z.string() }).parse(result)
-    return JSON.parse(data.prompt)
+    return apiWorkflowSchema.parse(JSON.parse(data.prompt))
   }
   async account(c: Config) {
     return this.request(c.site, '/uc/openapi/accountStatus', { apikey: this.key() })
@@ -61,7 +107,11 @@ export class RunningHub {
       .object({ fileName: z.string().min(1) })
       .parse(await this.request(site, '/task/openapi/upload', form)).fileName
   }
-  async start(j: Job, nodeInfoList: { nodeId: string; fieldName: string; fieldValue: string }[]) {
+  async start(
+    j: Job,
+    nodeInfoList: { nodeId: string; fieldName: string; fieldValue: string | number }[],
+    workflow?: ApiWorkflow,
+  ) {
     return z
       .object({
         taskId: z.union([z.string().regex(/^\d+$/), z.number().int().safe()]).transform(String),
@@ -70,6 +120,8 @@ export class RunningHub {
         await this.request(j.site, '/task/openapi/create', {
           workflowId: j.workflowId,
           nodeInfoList,
+          ...(workflow ? { workflow: JSON.stringify(workflow) } : {}),
+          ...(j.instanceType ? { instanceType: j.instanceType } : {}),
         }),
       ).taskId
   }
@@ -124,9 +176,7 @@ export class Queue {
     if (this.timer) clearInterval(this.timer)
   }
   enqueue(projectId: string, shotIds: string[], stopOnFailure: boolean) {
-    const c = this.store.config(),
-      p = this.store.project(projectId)
-    if (!c.workflowId || !c.mappings.length) throw new Error('请先配置工作流 ID 与参数映射')
+    const p = this.store.project(projectId)
     const selected = [...new Set(shotIds)].map((id) => {
       const s = p.shots.find((s) => s.id === id)
       if (!s) throw new Error('镜头不存在')
@@ -146,10 +196,8 @@ export class Queue {
           )
       )
         throw new Error(`${s.title} 已有未完成任务，请先处理原任务`)
-      for (const map of c.mappings) {
-        if (map.source === 'first' && !s.firstMediaId) throw new Error(`${s.title} 缺少首帧`)
-        if (map.source === 'last' && !s.lastMediaId) throw new Error(`${s.title} 缺少尾帧`)
-      }
+      if (!(s.videoPrompt.trim() || s.action.trim()))
+        throw new Error(`${s.title} 缺少视频提示词或镜头动作`)
     }
     const batchId = randomUUID(),
       now = new Date().toISOString()
@@ -161,9 +209,11 @@ export class Queue {
         batchId,
         stopOnFailure,
         status: 'queued',
-        site: c.site,
-        workflowId: c.workflowId,
-        mappings: c.mappings,
+        site: videoWorkflow.site,
+        workflowId: videoWorkflow.id,
+        instanceType: videoWorkflow.instanceType,
+        aspect: p.aspect,
+        mappings: [],
         snapshot: structuredClone(s),
         createdAt: now,
         updatedAt: now,
@@ -214,7 +264,25 @@ export class Queue {
       this.save(j)
       const p = this.store.project(j.projectId),
         uploads: Record<string, string> = {}
-      const nodeInfoList = []
+      const nodeInfoList: { nodeId: string; fieldName: string; fieldValue: string | number }[] = []
+      if (j.instanceType === 'plus') {
+        const source = await this.api.workflow(j)
+        const frames: { first?: string; last?: string } = {}
+        for (const slot of ['first', 'last'] as const) {
+          const mediaId = slot === 'first' ? j.snapshot.firstMediaId : j.snapshot.lastMediaId
+          if (!mediaId) continue
+          const media = p.media.find((item) => item.id === mediaId && item.kind === 'image')
+          if (!media) throw new Error(`缺少${slot === 'first' ? '首' : '尾'}帧图片素材`)
+          frames[slot] = await this.api.upload(j.site, this.store.file(p.id, media.file))
+        }
+        const workflow = prepareVideoWorkflow(source, j.snapshot, j.aspect || p.aspect, frames)
+        if (this.store.job(j.id).status === 'cancelled') return
+        sent = true
+        j.taskId = await this.api.start(j, nodeInfoList, workflow)
+        j.status = 'running'
+        this.save(j)
+        return
+      }
       for (const m of j.mappings) {
         let value = m.value
         if (m.source === 'prompt') value = j.snapshot.videoPrompt || j.snapshot.action
