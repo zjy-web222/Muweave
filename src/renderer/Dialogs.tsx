@@ -471,8 +471,17 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <h3>
             <KeyRound size={17} /> {t('RunningHub 工作流')}
           </h3>
-          <p className="small muted">{t('已内置指定工作流，使用 RunningHub 中国站 Plus 模式。')}</p>
+          <p className="small muted">{t('已内置指定工作流，使用 RunningHub 中国站。')}</p>
           <p className="small muted break">{t('工作流：')}{videoWorkflow.id}</p>
+          <Field label={t('视频生成模式')}>
+            <select
+              value={c.instanceType}
+              onChange={(e) => patch({ instanceType: e.target.value as Config['instanceType'] })}
+            >
+              <option value="plus">{t('Plus（48 GB 显存）')}</option>
+              <option value="default">{t('Standard（24 GB 显存）')}</option>
+            </select>
+          </Field>
           <Field
             label={`API Key ${state.hasKey ? t('· 已安全保存') : ''}`}
             hint={t('留空保留原 Key。Key 不回传到界面，不进入 ZIP 存档。')}

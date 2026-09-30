@@ -200,8 +200,11 @@ export const en: Record<string, string> = {
   '正在生成图片…': 'Generating image…',
   在软件中直接生成图片: 'Generate image in app',
   '图片已生成并保存到当前项目素材。': 'Image generated and saved to project media.',
-  '已内置指定工作流，使用 RunningHub 中国站 Plus 模式。':
-    'The specified workflow is built in and runs on RunningHub China in Plus mode.',
+  '已内置指定工作流，使用 RunningHub 中国站。':
+    'The specified workflow is built in and runs on RunningHub China.',
+  视频生成模式: 'Video generation mode',
+  'Plus（48 GB 显存）': 'Plus (48 GB VRAM)',
+  'Standard（24 GB 显存）': 'Standard (24 GB VRAM)',
   站点: 'Site',
   '中国 · runninghub.cn': 'China · runninghub.cn',
   '复制工作流的数字 ID': 'Paste the numeric workflow ID',

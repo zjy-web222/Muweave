@@ -881,7 +881,8 @@ function App() {
               </Field>
               <p className="small muted">
                 {t('工作流：')}
-                {videoWorkflow.id} · Plus {t('· 并发')} {state.config.concurrency}{' '}
+                {videoWorkflow.id} · {state.config.instanceType === 'plus' ? 'Plus' : 'Standard'}{' '}
+                {t('· 并发')} {state.config.concurrency}{' '}
                 {t('· 当前选择')} {batch.length} {t('镜头')}
               </p>
               {!state.hasKey && (

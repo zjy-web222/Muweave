@@ -177,6 +177,7 @@ export class Queue {
   }
   enqueue(projectId: string, shotIds: string[], stopOnFailure: boolean) {
     const p = this.store.project(projectId)
+    const instanceType = this.store.config().instanceType
     const selected = [...new Set(shotIds)].map((id) => {
       const s = p.shots.find((s) => s.id === id)
       if (!s) throw new Error('镜头不存在')
@@ -211,7 +212,7 @@ export class Queue {
         status: 'queued',
         site: videoWorkflow.site,
         workflowId: videoWorkflow.id,
-        instanceType: videoWorkflow.instanceType,
+        instanceType,
         aspect: p.aspect,
         mappings: [],
         snapshot: structuredClone(s),
@@ -265,7 +266,7 @@ export class Queue {
       const p = this.store.project(j.projectId),
         uploads: Record<string, string> = {}
       const nodeInfoList: { nodeId: string; fieldName: string; fieldValue: string | number }[] = []
-      if (j.instanceType === 'plus') {
+      if (j.instanceType) {
         const source = await this.api.workflow(j)
         const frames: { first?: string; last?: string } = {}
         for (const slot of ['first', 'last'] as const) {

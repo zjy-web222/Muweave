@@ -57,6 +57,11 @@ describe('local project state', () => {
     store.set('config', { ...store.config(), locale: 'en' })
     expect(store.config().locale).toBe('en')
   })
+  it('defaults existing RunningHub settings to Plus', () => {
+    const { instanceType: _instanceType, ...legacy } = defaultConfig
+    store.set('config', legacy)
+    expect(store.config().instanceType).toBe('plus')
+  })
   it('uses the selected language for new project and shot defaults', () => {
     const project = createProject('My film', '16:9', false, 'en')
     expect(project.episodes[0].title).toBe('Episode 1')
@@ -350,6 +355,19 @@ describe('safe paid-job lifecycle', () => {
       mappings: [],
     })
   })
+  it('stores the selected Standard mode on each new job', () => {
+    const p = store.save(createProject('standard workflow', '16:9', true))
+    store.set('config', { ...defaultConfig, instanceType: 'default', paused: true })
+    const q = new Queue(store, {} as RunningHub, () => {})
+    q.enqueue(p.id, [p.shots[0].id], false)
+    expect(store.jobs()[0]).toMatchObject({
+      workflowId: videoWorkflow.id,
+      instanceType: 'default',
+      mappings: [],
+    })
+    store.set('config', { ...defaultConfig, instanceType: 'plus', paused: true })
+    expect(store.jobs()[0].instanceType).toBe('default')
+  })
   it('prepares prompt, frame count, aspect, seed, and optional image inputs', () => {
     const shot = { ...blankShot('episode'), videoPrompt: 'Rain over a city', duration: 5, seed: 77 }
     const source = {
@@ -365,17 +383,38 @@ describe('safe paid-job lifecycle', () => {
     expect(source['17'].inputs.prompt).toBe('old')
     expect(() => prepareVideoWorkflow({}, shot, '16:9')).toThrow('视频节点已变化')
   })
-  it('sends the complete workflow as JSON and selects Plus', async () => {
+  it.each(['plus', 'default'] as const)('sends the complete workflow with %s instance', async (instanceType) => {
     const j = makeJob()
-    j.instanceType = 'plus'
+    j.instanceType = instanceType
     const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, data: { taskId: '987' } }), { status: 200 }))
     const api = new RunningHub(() => 'local-test-key', transport)
     expect(await api.start(j, [], { '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: 'test' } } })).toBe('987')
     const [url, options] = transport.mock.calls[0]
     const body = JSON.parse(options.body)
     expect(url).toBe(`${j.site}/task/openapi/create`)
-    expect(body).toMatchObject({ instanceType: 'plus', workflowId: j.workflowId, apiKey: 'local-test-key' })
+    expect(body).toMatchObject({ instanceType, workflowId: j.workflowId, apiKey: 'local-test-key' })
     expect(JSON.parse(body.workflow)['17'].inputs.prompt).toBe('test')
+  })
+  it('prepares the built-in workflow before submitting a Standard job', async () => {
+    const p = store.save(createProject('standard submit', '16:9', true))
+    store.set('config', { ...defaultConfig, instanceType: 'default' })
+    const api = {
+      workflow: vi.fn().mockResolvedValue({
+        '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: '', length: 5 } },
+      }),
+      start: vi.fn().mockResolvedValue('123'),
+      status: vi.fn().mockResolvedValue('RUNNING'),
+    } as unknown as RunningHub
+    const q = new Queue(store, api, () => {})
+    q.enqueue(p.id, [p.shots[0].id], false)
+    await settle()
+    expect(api.workflow).toHaveBeenCalledWith(expect.objectContaining({ workflowId: videoWorkflow.id }))
+    expect(api.start).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceType: 'default' }),
+      [],
+      expect.objectContaining({ '17': expect.objectContaining({ inputs: expect.objectContaining({ prompt: p.shots[0].videoPrompt }) }) }),
+    )
+    expect(store.jobs()[0]).toMatchObject({ status: 'running', taskId: '123' })
   })
   it('never resubmits an interrupted submission when restarting', async () => {
     const j = makeJob('submitting')

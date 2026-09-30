@@ -725,6 +725,7 @@ export function Tasks({ jobs, onClose }: { jobs: Job[]; onClose: () => void }) {
                 </div>
                 <p className="small muted">
                   {new Date(j.createdAt).toLocaleString()} · workflow {j.workflowId}
+                  {j.instanceType && ` · ${j.instanceType === 'plus' ? 'Plus' : 'Standard'}`}
                 </p>
                 {j.taskId && <p className="mono small break">Task ID: {j.taskId}</p>}
                 {j.error && <p className="job-error">{t(j.error)}</p>}
