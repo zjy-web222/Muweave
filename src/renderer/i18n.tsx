@@ -189,6 +189,17 @@ export const en: Record<string, string> = {
   '打开 / 登录': 'Open / Sign in',
   退出并清除本应用登录记录: 'Sign out and clear this app’s session',
   'RunningHub 工作流': 'RunningHub workflow',
+  'ChatGPT 账号 · 文字与图片': 'ChatGPT account · Text and images',
+  '授权一次后，文字回复和生成图片都会直接保存到软件。':
+    'Connect once to receive text and generated images directly in the app.',
+  '使用已连接的 ChatGPT 账号，在软件中直接生成并保存图片。':
+    'Use your connected ChatGPT account to generate and save an image in the app.',
+  直接生成图片: 'Generate image directly',
+  '使用与文字生成相同的 ChatGPT 授权；完成后自动保存为当前镜头或资产的图片素材。':
+    'Uses the same ChatGPT connection as text. The image is saved to the current shot or asset.',
+  '正在生成图片…': 'Generating image…',
+  在软件中直接生成图片: 'Generate image in app',
+  '图片已生成并保存到当前项目素材。': 'Image generated and saved to project media.',
   '已内置指定工作流，使用 RunningHub 中国站 Plus 模式。':
     'The specified workflow is built in and runs on RunningHub China in Plus mode.',
   站点: 'Site',

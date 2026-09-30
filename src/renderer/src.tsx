@@ -76,6 +76,7 @@ function commandError(message: string) {
 }
 function App() {
   const [state, setState] = useState<Snapshot | null>(null),
+    [chatgptConnected, setChatgptConnected] = useState(false),
     [pid, setPid] = useState(''),
     [epid, setEpid] = useState(''),
     [selected, setSelected] = useState(''),
@@ -132,6 +133,16 @@ function App() {
     return window.director.onChange(() => {
       void run({ type: 'snapshot' })
     })
+  }, [run])
+  useEffect(() => {
+    const refresh = () => {
+      void run({ type: 'codexStatus' }).then((reply) =>
+        setChatgptConnected(reply.ok && reply.text === 'connected'),
+      )
+    }
+    refresh()
+    window.addEventListener('director:codex-login', refresh)
+    return () => window.removeEventListener('director:codex-login', refresh)
   }, [run])
   const p = state?.projects.find((p) => p.id === pid) || state?.projects[0],
     episodeId = p?.episodes.find((e) => e.id === epid)?.id || p?.episodes[0]?.id || '',
@@ -484,7 +495,7 @@ function App() {
                   </nav>
                   <div className="provider-status">
                     <button onClick={() => setSettings(true)}>
-                      <span className={state.chatgptOpen ? 'green-dot' : 'neutral-dot'} />
+                      <span className={chatgptConnected ? 'green-dot' : 'neutral-dot'} />
                       ChatGPT
                     </button>
                     <button onClick={() => setSettings(true)}>

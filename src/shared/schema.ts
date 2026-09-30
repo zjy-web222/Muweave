@@ -233,6 +233,13 @@ export const commandSchema = z.discriminatedUnion('type', [
     kind: z.enum(['script', 'assets', 'storyboard']),
     prompt: text,
   }),
+  z.object({
+    type: z.literal('generateImage'),
+    ...pid,
+    ownerId: id,
+    slot: z.enum(['first', 'last', 'reference']),
+    prompt: z.string().min(1).max(12000),
+  }),
   z.object({ type: z.literal('shot'), ...pid, shot: shotSchema }),
   z.object({ type: z.literal('deleteShot'), ...pid, shotId: id }),
   z.object({ type: z.literal('reorder'), ...pid, shotId: id, delta: z.enum(['up', 'down']) }),

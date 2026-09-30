@@ -4,6 +4,8 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import { Store } from './store'
+import { generateCodexImage } from './codex-image'
+import type { Project } from '../shared/schema'
 
 const require = createRequire(import.meta.url)
 const cli = join(
@@ -114,6 +116,17 @@ export class CodexText {
     const result = await command(['login'], undefined, 300000)
     if (result.code !== 0 || !(await this.connected()))
       throw new Error('ChatGPT 账号授权未完成，请重试。')
+  }
+
+  async image(prompt: string, aspect: Project['aspect']) {
+    if (this.busy) throw new Error('已有一轮 AI 生成正在进行，请等待完成。')
+    this.busy = true
+    try {
+      if (!(await this.connected())) throw new Error('请先在连接与设置中授权 ChatGPT 账号。')
+      return await generateCodexImage(cli, accountEnvironment(), prompt, aspect)
+    } finally {
+      this.busy = false
+    }
   }
 
   async generate(

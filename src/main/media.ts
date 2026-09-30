@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile, copyFile, rename, stat, rm, mkdtemp } from 'node:fs/promises'
-import { basename, extname, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { basename, dirname, extname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { zip, unzip, strToU8, strFromU8 } from 'fflate'
@@ -262,6 +264,17 @@ export class Exporter {
   child: ChildProcess | null = null
   busy = false
   cancelled = false
+  constructor(private resourcesPath?: string) {}
+  private binaries() {
+    const directory = this.resourcesPath
+      ? join(this.resourcesPath, 'ffmpeg')
+      : resolve(dirname(fileURLToPath(import.meta.url)), '../..', 'vendor/ffmpeg')
+    const ffmpeg = join(directory, 'ffmpeg.exe'),
+      ffprobe = join(directory, 'ffprobe.exe')
+    if (existsSync(ffmpeg) && existsSync(ffprobe)) return { ffmpeg, ffprobe }
+    if (this.resourcesPath) throw new Error('应用内 FFmpeg 文件缺失，请重新安装软件。')
+    return { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }
+  }
   cancel() {
     this.cancelled = true
     this.child?.kill()
@@ -283,7 +296,7 @@ export class Exporter {
       proc.once('error', (e) => {
         clearTimeout(timer)
         this.child = null
-        no(new Error(`无法启动 ${basename(binary)}：${e.message}。请在设置中指定 FFmpeg 路径。`))
+        no(new Error(`无法启动 ${basename(binary)}：${e.message}。`))
       })
       proc.once('close', (code) => {
         clearTimeout(timer)
@@ -330,10 +343,7 @@ export class Exporter {
         return
       }
       if (shots.some((s) => !s.videoMediaId)) throw new Error('请为每个镜头选择视频后再导出 MP4')
-      const ffmpeg = store.config().ffmpeg || 'ffmpeg',
-        ffprobe = /ffmpeg(?:\.exe)?$/i.test(ffmpeg)
-          ? ffmpeg.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1')
-          : 'ffprobe'
+      const { ffmpeg, ffprobe } = this.binaries()
       await mkdir(store.file(p.id, 'exports'), { recursive: true })
       temp = await mkdtemp(store.file(p.id, 'exports/render-'))
       const [w, h] =

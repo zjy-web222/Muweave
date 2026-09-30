@@ -138,10 +138,11 @@ export function buildPrompt(
   const ep = p.episodes.find((e) => e.id === episodeId)
   const story = ep?.script || p.source
   const storyboard = kind === 'storyboard'
-  const context = `项目：${p.title}\n画幅：${p.aspect}\n视觉风格：${p.style}\n故事：${storyboard ? story.slice(0, 30000) : story}${storyboard && story.length > 30000 ? '\n（剧本较长，以上仅包含前 30000 字。）' : ''}\n已确认资产：${(storyboard ? p.assets.slice(0, 100) : p.assets).map((a) => `${a.kind} ${a.name}: ${storyboard ? a.description.slice(0, 500) : a.description}`).join('\n')}`
+  const image = kind === 'image'
+  const context = `项目：${p.title}\n画幅：${p.aspect}\n视觉风格：${p.style}\n故事：${storyboard ? story.slice(0, 30000) : image ? story.slice(0, 5000) : story}${storyboard && story.length > 30000 ? '\n（剧本较长，以上仅包含前 30000 字。）' : ''}\n已确认资产：${(storyboard ? p.assets.slice(0, 100) : image ? p.assets.slice(0, 20) : p.assets).map((a) => `${a.kind} ${a.name}: ${storyboard ? a.description.slice(0, 500) : image ? a.description.slice(0, 150) : a.description}`).join('\n')}`
   if (kind === 'image') {
     const a = p.assets.find((a) => a.id === assetId)
-    return `${context}\n\n请直接生成一张${a ? '资产参考图' : '电影分镜图'}，无水印、无文字，保留角色和场景连续性。${a ? `${a.name}：${a.prompt || a.description}` : `${shot?.title}\n${shot?.imagePrompt || shot?.action}\n${shot?.size}；${shot?.camera}；${shot?.lighting}`}。参考图由我在本对话中附加。`
+    return `${context}\n\n请直接生成一张${a ? '资产参考图' : '电影分镜图'}，无水印、无文字，保留角色和场景连续性。${a ? `${a.name}：${a.prompt || a.description}` : `${shot?.title}\n${shot?.imagePrompt || shot?.action}\n${shot?.size}；${shot?.camera}；${shot?.lighting}`}。`
   }
   const task = {
     script: '改编为可拍摄的短剧剧本，明确冲突、动作、对白和分集。',

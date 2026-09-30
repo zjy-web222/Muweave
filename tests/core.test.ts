@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process'
 import { zipSync, strToU8 } from 'fflate'
 import { Store, createProject, inside } from '../src/main/store'
 import { codexFinalMessage } from '../src/main/codex'
+import { codexImageBytes } from '../src/main/codex-image'
 import { prepareChatFile } from '../src/main/chat-files'
 import { exportArchive, restoreArchive, importMedia, Exporter } from '../src/main/media'
 import {
@@ -38,6 +39,17 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('local project state', () => {
+  it('accepts a completed Codex PNG and rejects an unrelated saved path', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
+    await expect(codexImageBytes({ type: 'imageGeneration', status: 'completed', result: png.toString('base64') }, root)).resolves.toEqual(png)
+    const outside = join(tmpdir(), `codex-image-outside-${Date.now()}.png`)
+    await writeFile(outside, png)
+    try {
+      await expect(codexImageBytes({ type: 'imageGeneration', status: 'completed', savedPath: outside }, root)).rejects.toThrow('图片路径无效')
+    } finally {
+      await rm(outside, { force: true })
+    }
+  })
   it('keeps existing settings when adding the language preference', () => {
     const { locale: _locale, ...legacy } = defaultConfig
     store.set('config', { ...legacy, theme: 'dark' })

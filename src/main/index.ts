@@ -51,7 +51,7 @@ let window: BrowserWindow | null = null,
   queue: Queue,
   chatgpt: ChatGPT,
   codex: CodexText
-const exporter = new Exporter()
+const exporter = new Exporter(app.isPackaged ? process.resourcesPath : undefined)
 const pendingChatFiles = new Map<
   string,
   { projectId: string; path: string; name: string; size: number }
@@ -355,7 +355,7 @@ if (primary)
             break
           case 'codexLogin':
             await codex.login()
-            message = 'ChatGPT 账号已连接，可在软件中直接生成文本。'
+            message = 'ChatGPT 账号已连接，可在软件中生成文字和图片。'
             break
           case 'generateText': {
             const p = store.project(c.projectId)
@@ -364,6 +364,22 @@ if (primary)
               c.prompt || buildPrompt(p, c.episodeId, c.kind),
               c.kind === 'storyboard' ? storyboardResponseJsonSchema : undefined,
             )
+            break
+          }
+          case 'generateImage': {
+            const p = store.project(c.projectId)
+            if (c.slot === 'reference' ? !p.assets.some((a) => a.id === c.ownerId) : !p.shots.some((s) => s.id === c.ownerId))
+              throw new Error('图片所属镜头或资产已不存在')
+            const bytes = await codex.image(c.prompt, p.aspect)
+            const file = store.file(p.id, `downloads/codex-${randomUUID()}.png`)
+            await mkdir(store.file(p.id, 'downloads'), { recursive: true })
+            await writeFile(file, bytes)
+            try {
+              await importMedia(store, p.id, c.ownerId, c.slot, file, c.prompt)
+            } finally {
+              await rm(file, { force: true })
+            }
+            message = '图片已生成并保存到当前项目素材。'
             break
           }
           case 'shot':

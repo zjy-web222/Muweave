@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import {
   Plus,
   Copy,
-  ArrowUpRight,
   KeyRound,
   ShieldCheck,
   FolderArchive,
@@ -142,13 +141,13 @@ export function GenerationDialog({
       }
       subtitle={
         kind === 'image'
-          ? t('使用你自己的浏览器登录会话；本应用不索取 ChatGPT 密码。')
+          ? t('使用已连接的 ChatGPT 账号，在软件中直接生成并保存图片。')
           : t('连接 ChatGPT 账号后，文字结果可直接返回软件。')
       }
-      onClose={onClose}
+      onClose={() => !generating && onClose()}
       wide
     >
-      <div className="flow-steps">
+      {kind !== 'image' && <div className="flow-steps">
         <button className={step === 'prompt' ? 'active' : ''} onClick={() => setStep('prompt')}>
           {t('1 编辑提示词')}
         </button>
@@ -156,19 +155,17 @@ export function GenerationDialog({
         <button className={step === 'result' ? 'active' : ''} onClick={() => setStep('result')}>
           {t('2 导入生成结果')}
         </button>
-      </div>
+      </div>}
       <div className="modal-body">
         {step === 'prompt' ? (
           <>
             <div className="notice">
               <ShieldCheck size={18} />
               <div>
-                {kind === 'image' ? t('浏览器辅助模式') : t('直接生成文字')}
+                {kind === 'image' ? t('直接生成图片') : t('直接生成文字')}
                 <p>
                   {kind === 'image'
-                    ? t(
-                        '提示词会复制到剪贴板，并打开独立 ChatGPT 窗口。请粘贴后发送；遇到验证时由你手动完成。不是官方第三方 OAuth / API 授权。',
-                      )
+                    ? t('使用与文字生成相同的 ChatGPT 授权；完成后自动保存为当前镜头或资产的图片素材。')
                     : t('点击生成后，文字结果会直接返回软件。')}
                 </p>
               </div>
@@ -177,42 +174,13 @@ export function GenerationDialog({
               <textarea
                 className="prompt-editor"
                 rows={14}
+                maxLength={kind === 'image' ? 12000 : undefined}
                 value={prompt}
+                disabled={generating}
                 onChange={(e) => setPrompt(e.target.value)}
               />
             </Field>
-            {kind === 'image' && (
-              <p className="small muted">
-                {t(
-                  '如需保持人物一致，请在 ChatGPT 同一对话中附加已确认的角色参考图。下载的图片会提示归入当前资产；也可在“素材与版本”中手动导入。',
-                )}
-              </p>
-            )}
           </>
-        ) : kind === 'image' ? (
-          <div className="notice">
-            <FolderArchive size={24} />
-            <div>
-              {t('下载图片后归档')}
-              <p>
-                {t(
-                  '在 ChatGPT 中下载生成图片，确认归属后会自动建立一个素材版本。若自动下载归档没有触发，请点击下方“导入图片”。',
-                )}
-              </p>
-              <Button
-                onClick={() =>
-                  void run({
-                    type: 'importMedia',
-                    projectId: p.id,
-                    ownerId: assetId || shot!.id,
-                    slot: assetId ? 'reference' : slot,
-                  })
-                }
-              >
-                {t('导入图片')}
-              </Button>
-            </div>
-          </div>
         ) : (
           <>
             <div className="row-between">
@@ -244,7 +212,7 @@ export function GenerationDialog({
         )}
       </div>
       <div className="modal-footer">
-        <Button onClick={onClose}>{t('完成 / 关闭')}</Button>
+        <Button disabled={generating} onClick={onClose}>{t('完成 / 关闭')}</Button>
         {step === 'prompt' ? (
           <>
             {kind !== 'image' && (
@@ -275,21 +243,28 @@ export function GenerationDialog({
             )}
             {kind === 'image' && (
               <Button
-                disabled={generating}
+                primary
+                disabled={generating || !prompt.trim()}
                 onClick={async () => {
-                  const r = await run({
-                    type: 'chatgpt',
-                    projectId: p.id,
-                    ownerId: assetId || shot?.id || episodeId,
-                    kind,
-                    prompt,
-                    slot: assetId ? 'reference' : slot,
-                  })
-                  if (r.ok) setStep('result')
+                  setGenerating(true)
+                  try {
+                    const r = await run({
+                      type: 'generateImage',
+                      projectId: p.id,
+                      ownerId: assetId || shot!.id,
+                      prompt: prompt.trim(),
+                      slot: assetId ? 'reference' : slot,
+                    })
+                    if (r.ok) {
+                      notice(t('图片已生成并保存到当前项目素材。'))
+                      onClose()
+                    }
+                  } finally {
+                    setGenerating(false)
+                  }
                 }}
               >
-                {t('复制并打开 ChatGPT')}
-                <ArrowUpRight size={15} />
+                {generating ? t('正在生成图片…') : t('在软件中直接生成图片')}
               </Button>
             )}
           </>
@@ -458,7 +433,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       <div className="modal-body settings-body">
         <section>
           <h3>
-            <KeyRound size={17} /> {t('ChatGPT 账号 · 文字生成')}
+            <KeyRound size={17} /> {t('ChatGPT 账号 · 文字与图片')}
           </h3>
           <div className="row-between">
             <div>
@@ -470,7 +445,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                     : t('需要连接 ChatGPT 账号')}
               </strong>
               <p className="small muted">
-                {t('使用 ChatGPT 账号的 Codex 授权，文字对话会直接返回软件。')}
+                {t('授权一次后，文字回复和生成图片都会直接保存到软件。')}
               </p>
             </div>
             <Button
@@ -491,23 +466,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               {busy ? t('等待账号授权…') : accountConnected ? t('已连接') : t('连接账号')}
             </Button>
           </div>
-        </section>
-        <section>
-          <h3>
-            <ArrowUpRight size={17} /> {t('ChatGPT 浏览器 · 图片辅助')}
-          </h3>
-          <div className="row-between">
-            <div>
-              <strong>{t('由你本人登录')}</strong>
-              <p className="small muted">
-                {t('登录状态保存在隔离浏览器中，不读取 Cookie 或账号密码。')}
-              </p>
-            </div>
-            <Button onClick={() => void run({ type: 'openChatGPT' })}>{t('打开 / 登录')}</Button>
-          </div>
-          <button className="text-button danger" onClick={() => void run({ type: 'clearChatGPT' })}>
-            {t('退出并清除本应用登录记录')}
-          </button>
         </section>
         <section>
           <h3>
@@ -555,12 +513,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <h3>
             <Film size={17} /> {t('导出与外观')}
           </h3>
-          <Field
-            label={t('FFmpeg 可执行文件')}
-            hint={t('若已加入 PATH，填写 ffmpeg 即可。ffprobe 应位于同一目录。')}
-          >
-            <input value={c.ffmpeg} onChange={(e) => patch({ ffmpeg: e.target.value })} />
-          </Field>
           <Field label={t('界面主题')}>
             <select
               value={c.theme}
