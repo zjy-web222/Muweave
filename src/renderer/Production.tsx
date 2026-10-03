@@ -23,7 +23,7 @@ import {
   ChevronRight,
   Paperclip,
 } from 'lucide-react'
-import { type Asset, type Job, type Project, type Shot } from '../shared/schema'
+import { mediaUrl, type Asset, type Job, type Project, type Shot } from '../shared/schema'
 import { Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versions } from './ui'
 
 export function ScriptEditor({
@@ -590,26 +590,69 @@ export function AssetsView({ p, onGenerate }: { p: Project; onGenerate: (a: Asse
 }
 export function CutView({
   p,
+  episodeId,
   shots,
   onSelect,
   onExport,
 }: {
   p: Project
+  episodeId: string
   shots: Shot[]
   onSelect: (id: string) => void
   onExport: () => void
 }) {
   const t = useT()
   const { run } = useWorkspace(),
-    [current, setCurrent] = useState(shots[0]?.id || '')
+    [current, setCurrent] = useState(shots[0]?.id || ''),
+    [previewUrl, setPreviewUrl] = useState(''),
+    [previewing, setPreviewing] = useState(false),
+    [previewError, setPreviewError] = useState(''),
+    [autoplay, setAutoplay] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const complete = shots.length > 0 && shots.every((shot) => !!shot.videoMediaId)
+  const previewVersion = JSON.stringify([p.aspect, ...shots.map((shot) =>
+    [shot.id, shot.videoMediaId, shot.audioMediaId, shot.duration])])
+  useEffect(() => {
+    setCurrent(shots[0]?.id || '')
+    setAutoplay(false)
+  }, [episodeId])
+  useEffect(() => {
+    let active = true
+    setPreviewUrl('')
+    setPreviewError('')
+    if (!complete) {
+      setPreviewing(false)
+      return
+    }
+    setPreviewing(true)
+    void run({ type: 'previewEpisode', projectId: p.id, episodeId }).then((reply) => {
+      if (!active) return
+      setPreviewing(false)
+      if (reply.ok) setPreviewUrl(reply.text || '')
+      else setPreviewError(reply.error)
+    })
+    return () => { active = false }
+  }, [p.id, episodeId, complete, previewVersion, run])
+  useEffect(() => {
+    if (autoplay && !previewUrl) void videoRef.current?.play().catch(() => setAutoplay(false))
+  }, [current, previewUrl, autoplay])
   const shot = shots.find((s) => s.id === current) || shots[0]
+  const selectedVideo = p.media.find((media) => media.id === shot?.videoMediaId && media.kind === 'video')
+  const jumpTo = (id: string) => {
+    setCurrent(id)
+    if (previewUrl && videoRef.current) {
+      const index = shots.findIndex((shot) => shot.id === id)
+      videoRef.current.currentTime = shots.slice(0, index).reduce((time, shot) => time + shot.duration, 0)
+      void videoRef.current.play()
+    } else if (p.shots.find((shot) => shot.id === id)?.videoMediaId) setAutoplay(true)
+  }
   return (
     <div className="cut-view">
       <div className="page-heading">
         <div>
           <span className="eyebrow">ASSEMBLY & DELIVERY</span>
           <h1>{t('从镜头，走向一个完整的故事。')}</h1>
-          <p>{t('选择镜头预览；镜头时长和对白来自检查器，音轨可以单独导入。')}</p>
+          <p>{t('整集连续预览按镜头顺序播放；选择下方镜头可跳转到对应位置。')}</p>
         </div>
         <Button primary onClick={onExport}>
           <FolderOpen size={15} />
@@ -619,7 +662,58 @@ export function CutView({
       {shot ? (
         <>
           <div className="review-player">
-            <Preview p={p} mediaId={shot.videoMediaId || shot.firstMediaId} slot="video" controls />
+            {previewUrl ? (
+              <video
+                ref={videoRef}
+                src={previewUrl}
+                controls
+                preload="metadata"
+                className="media-preview"
+                onTimeUpdate={(event) => {
+                  const time = event.currentTarget.currentTime
+                  let elapsed = 0
+                  for (const item of shots) {
+                    elapsed += item.duration
+                    if (time < elapsed || item === shots.at(-1)) {
+                      if (item.id !== current) setCurrent(item.id)
+                      break
+                    }
+                  }
+                }}
+              />
+            ) : selectedVideo ? (
+              <video
+                key={selectedVideo.id}
+                ref={videoRef}
+                src={mediaUrl(p.id, selectedVideo.id)}
+                controls
+                preload="metadata"
+                autoPlay={autoplay}
+                className="media-preview"
+                onPlay={() => setAutoplay(true)}
+                onEnded={() => {
+                  const next = shots[shots.findIndex((item) => item.id === shot.id) + 1]
+                  if (next?.videoMediaId) setCurrent(next.id)
+                  else setAutoplay(false)
+                }}
+              />
+            ) : <Preview p={p} mediaId={shot.firstMediaId} slot="video" />}
+          </div>
+          <div className="review-preview-state small muted" role="status">
+            {previewing ? t('正在拼接整集预览…') : previewUrl
+              ? t('预览使用与 MP4 导出相同的镜头顺序、画幅、时长和音频。')
+              : complete ? previewError : t('有镜头尚无视频；可连续播放已完成的相邻镜头。')}
+            {shots.some((item) => item.stale && item.videoMediaId) &&
+              <span>{t('部分镜头的视频已过期，建议按顺序重新生成。')}</span>}
+            {previewError && <Button onClick={() => {
+              setPreviewing(true)
+              setPreviewError('')
+              void run({ type: 'previewEpisode', projectId: p.id, episodeId }).then((reply) => {
+                setPreviewing(false)
+                if (reply.ok) setPreviewUrl(reply.text || '')
+                else setPreviewError(reply.error)
+              })
+            }}>{t('重试拼接预览')}</Button>}
           </div>
           <div className="row-between review-title">
             <div>
@@ -669,14 +763,15 @@ export function CutView({
                 key={s.id}
                 className={s.id === shot.id ? 'selected' : ''}
                 style={{ flexGrow: s.duration }}
-                onClick={() => setCurrent(s.id)}
+                onClick={() => jumpTo(s.id)}
               >
                 <Preview p={p} mediaId={s.firstMediaId} />
                 <span>
                   {String(i + 1).padStart(2, '0')} · {s.title}
                 </span>
                 <small>
-                  {s.duration}s {s.videoMediaId ? t('· 有视频') : t('· 待生成')}
+                  {s.duration}s {s.stale && s.videoMediaId ? t('· 待更新') :
+                    s.videoMediaId ? t('· 有视频') : t('· 待生成')}
                 </small>
               </button>
             ))}

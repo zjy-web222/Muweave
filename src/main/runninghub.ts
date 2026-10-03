@@ -1,10 +1,10 @@
-import { readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { z } from 'zod'
 import { type Job, type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
 import { Store } from './store'
-import { downloadVideo, importMedia } from './media'
+import { downloadVideo, extractLastFrame, importMedia } from './media'
 
 const envelope = z.object({
   code: z.number(),
@@ -23,12 +23,12 @@ export function prepareVideoWorkflow(
   shot: Shot,
   aspect: Project['aspect'],
   frames: { first?: string; last?: string } = {},
+  prompt = shot.videoPrompt.trim() || shot.action.trim(),
 ): ApiWorkflow {
   const graph = structuredClone(apiWorkflowSchema.parse(source)) as ApiWorkflow
   const video = graph['17']
   if (video?.class_type !== 'MiniMaxH3ImageToVideo')
     throw new Error('指定工作流的视频节点已变化，请核对 RunningHub 工作流')
-  const prompt = shot.videoPrompt.trim() || shot.action.trim()
   if (!prompt) throw new Error(`${shot.title} 缺少视频提示词或镜头动作`)
   video.inputs.prompt = prompt
   // The supplied workflow uses 24 fps and rounds frame count to 17n + 5.
@@ -57,6 +57,28 @@ export function prepareVideoWorkflow(
     video.inputs[slot === 'first' ? 'first_frame' : 'last_frame'] = [nodeId, 0]
   }
   return graph
+}
+export function relevantAssets(p: Project, shot: Shot) {
+  const scene = [shot.title, shot.scene, shot.action, shot.dialogue, shot.videoPrompt].join(' ')
+  return p.assets.filter((asset) =>
+    shot.assetIds.includes(asset.id) ||
+    (asset.kind === 'character' && asset.name.length >= 2 && scene.includes(asset.name)),
+  )
+}
+export function videoPromptWithAssets(p: Project, shot: Shot, continuing: boolean, hasFirstFrame: boolean) {
+  const base = shot.videoPrompt.trim() || shot.action.trim()
+  const assets = relevantAssets(p, shot)
+  const details = assets.map((asset) =>
+    `${asset.kind} ${asset.name}：${asset.description.slice(0, 400)}${asset.prompt ? `；${asset.prompt.slice(0, 400)}` : ''}`,
+  )
+  return [
+    base,
+    ...(details.length ? [`已确认的角色与场景设定（与前文冲突时以此为准）：\n${details.join('\n')}`] : []),
+    continuing
+      ? '从输入首帧紧接上一镜头继续动作，保持相同人物面容、服装、位置、运动方向、场景和光线；不要重新开场或突然切换人物。'
+      : hasFirstFrame ? '保持已确认的人物外观、服装和场景一致；以输入首帧中的形象为准。' :
+        '保持已确认的人物外观、服装和场景一致。',
+  ].join('\n\n')
 }
 export class RunningHub {
   constructor(
@@ -141,9 +163,10 @@ export class RunningHub {
   }
 }
 export function inputsChanged(current: Shot, snapshot: Shot) {
-  return ['imagePrompt', 'videoPrompt', 'firstMediaId', 'lastMediaId', 'duration', 'seed'].some(
-    (k) => current[k as keyof Shot] !== snapshot[k as keyof Shot],
-  )
+  return current.assetIds.join(',') !== snapshot.assetIds.join(',') ||
+    ['imagePrompt', 'videoPrompt', 'firstMediaId', 'lastMediaId', 'duration', 'seed'].some(
+      (k) => current[k as keyof Shot] !== snapshot[k as keyof Shot],
+    )
 }
 export class Queue {
   private busy = new Set<string>()
@@ -153,6 +176,7 @@ export class Queue {
     private store: Store,
     private api: RunningHub,
     private changed: () => void,
+    private resourcesPath?: string,
   ) {}
   start() {
     for (const j of this.store.jobs()) {
@@ -183,6 +207,7 @@ export class Queue {
       if (!s) throw new Error('镜头不存在')
       return s
     })
+    const selection = new Set(selected.map((shot) => shot.id))
     for (const s of selected) {
       if (
         this.store
@@ -199,10 +224,22 @@ export class Queue {
         throw new Error(`${s.title} 已有未完成任务，请先处理原任务`)
       if (!(s.videoPrompt.trim() || s.action.trim()))
         throw new Error(`${s.title} 缺少视频提示词或镜头动作`)
+      const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
+      const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
+      if (previous && !previous.videoMediaId && !selection.has(previous.id) &&
+          !this.store.jobs().some((job) => job.shotId === previous.id &&
+            ['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'].includes(job.status)))
+        throw new Error(`${s.title} 需要先生成上一镜头「${previous.title}」，才能使用它的末帧衔接`)
     }
     const batchId = randomUUID(),
       now = new Date().toISOString()
-    for (const s of selected)
+    for (const s of selected) {
+      const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
+      const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
+      const reference = relevantAssets(p, s).find((asset) =>
+        asset.kind === 'character' && asset.selectedMediaId &&
+        p.media.some((media) => media.id === asset.selectedMediaId && media.kind === 'image'),
+      )
       this.store.saveJob({
         id: randomUUID(),
         projectId,
@@ -213,6 +250,8 @@ export class Queue {
         site: videoWorkflow.site,
         workflowId: videoWorkflow.id,
         instanceType,
+        previousShotId: previous?.id,
+        referenceMediaId: reference?.selectedMediaId,
         aspect: p.aspect,
         mappings: [],
         snapshot: structuredClone(s),
@@ -221,6 +260,7 @@ export class Queue {
         pollErrors: 0,
         outputs: [],
       })
+    }
     this.changed()
     void this.tick()
   }
@@ -237,6 +277,26 @@ export class Queue {
         .length
     for (const j of jobs.filter((j) => j.status === 'queued').reverse()) {
       if (slots <= 0) break
+      if (j.previousShotId) {
+        const project = this.store.project(j.projectId)
+        const previous = project.shots.find((shot) => shot.id === j.previousShotId)
+        const pending = jobs.some((other) => other.id !== j.id &&
+          other.projectId === j.projectId && other.shotId === j.previousShotId &&
+          ['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'].includes(other.status))
+        const failedInBatch = jobs.some((other) => other.batchId === j.batchId &&
+          other.shotId === j.previousShotId && ['failed', 'cancelled'].includes(other.status))
+        if (pending || failedInBatch || !previous?.videoMediaId) {
+          const reason = pending ? '等待上一镜头完成后自动衔接' :
+            failedInBatch ? '上一镜头生成失败，连续生成已暂停' :
+              '上一镜头没有可用视频，连续生成已暂停'
+          if (j.error !== reason || (!pending && j.status !== 'paused')) {
+            j.error = reason
+            if (!pending) j.status = 'paused'
+            this.save(j)
+          }
+          continue
+        }
+      }
       if (
         j.stopOnFailure &&
         jobs.some((o) => o.batchId === j.batchId && ['failed', 'uncertain'].includes(o.status))
@@ -269,14 +329,35 @@ export class Queue {
       if (j.instanceType) {
         const source = await this.api.workflow(j)
         const frames: { first?: string; last?: string } = {}
-        for (const slot of ['first', 'last'] as const) {
-          const mediaId = slot === 'first' ? j.snapshot.firstMediaId : j.snapshot.lastMediaId
+        let continuing = false
+        const firstMediaId = j.referenceMediaId || j.snapshot.firstMediaId
+        if (j.previousShotId) {
+          const previous = p.shots.find((shot) => shot.id === j.previousShotId)
+          const video = p.media.find((media) => media.id === previous?.videoMediaId && media.kind === 'video')
+          if (!video) throw new Error('上一镜头视频缺失，未提交本镜头')
+          const frame = this.store.file(p.id, `downloads/chain-${j.id}.png`)
+          await mkdir(this.store.file(p.id, 'downloads'), { recursive: true })
+          try {
+            await extractLastFrame(this.store.file(p.id, video.file), frame, this.resourcesPath)
+            frames.first = await this.api.upload(j.site, frame)
+          } finally {
+            await rm(frame, { force: true })
+          }
+          continuing = true
+        }
+        for (const [slot, mediaId] of [
+          ['first', frames.first ? undefined : firstMediaId],
+          ['last', j.snapshot.lastMediaId],
+        ] as const) {
           if (!mediaId) continue
           const media = p.media.find((item) => item.id === mediaId && item.kind === 'image')
           if (!media) throw new Error(`缺少${slot === 'first' ? '首' : '尾'}帧图片素材`)
           frames[slot] = await this.api.upload(j.site, this.store.file(p.id, media.file))
         }
-        const workflow = prepareVideoWorkflow(source, j.snapshot, j.aspect || p.aspect, frames)
+        const workflow = prepareVideoWorkflow(
+          source, j.snapshot, j.aspect || p.aspect, frames,
+          videoPromptWithAssets(p, j.snapshot, continuing, !!frames.first),
+        )
         if (this.store.job(j.id).status === 'cancelled') return
         sent = true
         j.taskId = await this.api.start(j, nodeInfoList, workflow)

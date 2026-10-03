@@ -27,6 +27,8 @@ export function activate(p: Project, m: Media) {
     asset = p.assets.find((a) => a.id === m.ownerId)
   if (asset && m.slot === 'reference') {
     asset.selectedMediaId = m.id
+    for (const linked of p.shots.filter((shot) => shot.assetIds.includes(asset.id)))
+      linked.stale = !!linked.videoMediaId
     return
   }
   if (!shot) return
@@ -41,6 +43,9 @@ export function activate(p: Project, m: Media) {
   if (m.slot === 'video') {
     shot.videoMediaId = m.id
     shot.stale = false
+    const episodeShots = p.shots.filter((item) => item.episodeId === shot.episodeId)
+    for (const next of episodeShots.slice(episodeShots.findIndex((item) => item.id === shot.id) + 1))
+      if (next.videoMediaId) next.stale = true
   }
   if (m.slot === 'audio') shot.audioMediaId = m.id
 }
@@ -260,21 +265,38 @@ export async function restoreArchive(store: Store, file: string) {
   return p
 }
 
+export function ffmpegBinaries(resourcesPath?: string) {
+  const directory = resourcesPath
+    ? join(resourcesPath, 'ffmpeg')
+    : resolve(dirname(fileURLToPath(import.meta.url)), '../..', 'vendor/ffmpeg')
+  const ffmpeg = join(directory, 'ffmpeg.exe'),
+    ffprobe = join(directory, 'ffprobe.exe')
+  if (existsSync(ffmpeg) && existsSync(ffprobe)) return { ffmpeg, ffprobe }
+  if (resourcesPath) throw new Error('应用内 FFmpeg 文件缺失，请重新安装软件。')
+  return { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }
+}
+export async function extractLastFrame(input: string, output: string, resourcesPath?: string) {
+  const { ffmpeg } = ffmpegBinaries(resourcesPath)
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(ffmpeg, [
+      '-hide_banner', '-loglevel', 'error', '-y', '-sseof', '-0.5', '-i', input,
+      '-vf', 'reverse', '-frames:v', '1', '-update', '1', output,
+    ], { windowsHide: true, shell: false })
+    let error = ''
+    const timer = setTimeout(() => child.kill(), 60000)
+    child.stderr.on('data', (part) => { error = (error + part).slice(-1000) })
+    child.once('error', (cause) => { clearTimeout(timer); reject(cause) })
+    child.once('close', (code) => {
+      clearTimeout(timer)
+      code === 0 ? resolve() : reject(new Error(`无法提取上一镜头末帧：${error || `FFmpeg ${code}`}`))
+    })
+  })
+}
 export class Exporter {
   child: ChildProcess | null = null
   busy = false
   cancelled = false
   constructor(private resourcesPath?: string) {}
-  private binaries() {
-    const directory = this.resourcesPath
-      ? join(this.resourcesPath, 'ffmpeg')
-      : resolve(dirname(fileURLToPath(import.meta.url)), '../..', 'vendor/ffmpeg')
-    const ffmpeg = join(directory, 'ffmpeg.exe'),
-      ffprobe = join(directory, 'ffprobe.exe')
-    if (existsSync(ffmpeg) && existsSync(ffprobe)) return { ffmpeg, ffprobe }
-    if (this.resourcesPath) throw new Error('应用内 FFmpeg 文件缺失，请重新安装软件。')
-    return { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }
-  }
   cancel() {
     this.cancelled = true
     this.child?.kill()
@@ -343,7 +365,7 @@ export class Exporter {
         return
       }
       if (shots.some((s) => !s.videoMediaId)) throw new Error('请为每个镜头选择视频后再导出 MP4')
-      const { ffmpeg, ffprobe } = this.binaries()
+      const { ffmpeg, ffprobe } = ffmpegBinaries(this.resourcesPath)
       await mkdir(store.file(p.id, 'exports'), { recursive: true })
       temp = await mkdtemp(store.file(p.id, 'exports/render-'))
       const [w, h] =

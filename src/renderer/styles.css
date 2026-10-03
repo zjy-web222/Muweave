@@ -1526,6 +1526,14 @@ small,
   background: #20251e;
   color: #a0a795;
 }
+.review-preview-state {
+  max-width: 860px;
+  margin: 10px auto 0;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .review-title {
   max-width: 860px;
   margin: 18px auto 32px;

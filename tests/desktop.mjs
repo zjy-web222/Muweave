@@ -2,6 +2,7 @@ import { _electron as electron } from 'playwright'
 import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 
 const data = await mkdtemp(join(tmpdir(), 'director-desktop-'))
@@ -122,9 +123,15 @@ try {
   )
   assert.equal(await page.getByLabel('剧本正文').inputValue(), '新版悬念剧本。')
   await page.getByRole('button', { name: '下一集' }).click()
-  await page.waitForFunction(
-    () => document.querySelector('[aria-label="剧本正文"]')?.value === '第二集未手动保存的草稿。',
-  )
+  try {
+    await page.waitForFunction(
+      () => document.querySelector('[aria-label="剧本正文"]')?.value === '第二集未手动保存的草稿。',
+    )
+  } catch (error) {
+    const state = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+    console.error('Episode switch state:', await page.getByLabel('剧本正文').inputValue(), state.state.projects[0].episodes.map((episode) => [episode.title, episode.script]))
+    throw error
+  }
   assert.equal(await page.getByLabel('剧本正文').inputValue(), '第二集未手动保存的草稿。')
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   const secondEpisode = snapshot.state.projects[0].episodes[1]
@@ -329,6 +336,58 @@ try {
   await page.getByRole('button', { name: 'Final cut 04' }).click()
   await page.getByRole('heading', { name: 'Bring your shots together into a story.' }).waitFor()
   await page.screenshot({ path: join(evidence, '11-english-cut.png') })
+  const previewShots = [0, 1].map((index) => ({
+    ...project.shots[index],
+    id: crypto.randomUUID(),
+    episodeId: secondEpisode.id,
+    title: `Preview shot ${index + 1}`,
+    duration: 1,
+    firstMediaId: undefined,
+    lastMediaId: undefined,
+    videoMediaId: undefined,
+    audioMediaId: undefined,
+  }))
+  for (const previewShot of previewShots) {
+    const result = await page.evaluate(
+      ({ pid, shot }) => window.director.command({ type: 'shot', projectId: pid, shot }),
+      { pid: project.id, shot: previewShot },
+    )
+    assert(result.ok, result.error)
+  }
+  for (let index = 0; index < previewShots.length; index++) {
+    const video = join(data, `preview-${index}.mp4`)
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y', '-f', 'lavfi', '-i',
+      `color=c=${index ? 'blue' : 'red'}:s=320x180:r=24`,
+      '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video,
+    ], { windowsHide: true })
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
+    }, video)
+    const importedVideo = await page.evaluate(
+      ({ pid, sid }) => window.director.command({ type: 'importMedia', projectId: pid, ownerId: sid, slot: 'video' }),
+      { pid: project.id, sid: previewShots[index].id },
+    )
+    assert(importedVideo.ok, importedVideo.error)
+  }
+  await page.locator('.episode-nav .nav-select').nth(1).click()
+  await page.getByText('The preview uses the same shot order, aspect ratio, durations, and audio as the MP4 export.').waitFor({ timeout: 60000 })
+  await page.waitForFunction(() => {
+    const video = document.querySelector('.review-player video')
+    return video && Number.isFinite(video.duration) && video.duration >= 1.9
+  })
+  assert.match(await page.locator('.review-player video').getAttribute('src'), /^media:\/\/preview\//)
+  await page.locator('.review-player video').evaluate(async (video) => {
+    video.currentTime = 0
+    await video.play()
+  })
+  await page.waitForFunction(() => {
+    const video = document.querySelector('.review-player video')
+    return video && video.currentTime >= 1.2 && !video.seeking && video.readyState >= 2
+  })
+  await page.getByText('Preview shot 2', { exact: true }).first().waitFor()
+  await page.screenshot({ path: join(evidence, '11-stitched-preview.png') })
+  await page.locator('.episode-nav .nav-select').first().click()
   await page.getByRole('button', { name: 'Task center', exact: true }).first().click()
   await page.getByRole('dialog', { name: 'Task center' }).waitFor()
   await page.screenshot({ path: join(evidence, '12-english-tasks.png') })
@@ -408,6 +467,7 @@ try {
           'settings',
           'language and theme switching',
           'media import and protocol',
+          'stitched episode preview and timeline seeking',
           'archive roundtrip',
           'project removal without backup prompt',
           'dark mode',

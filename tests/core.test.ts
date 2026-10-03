@@ -412,10 +412,85 @@ describe('safe paid-job lifecycle', () => {
     expect(api.start).toHaveBeenCalledWith(
       expect.objectContaining({ instanceType: 'default' }),
       [],
-      expect.objectContaining({ '17': expect.objectContaining({ inputs: expect.objectContaining({ prompt: p.shots[0].videoPrompt }) }) }),
+      expect.objectContaining({ '17': expect.objectContaining({ inputs: expect.objectContaining({ prompt: expect.stringContaining(p.shots[0].videoPrompt) }) }) }),
     )
     expect(store.jobs()[0]).toMatchObject({ status: 'running', taskId: '123' })
   })
+  it('uses a linked character image as the opening frame and includes its identity in the prompt', async () => {
+    const p = store.save(createProject('character reference', '16:9', true))
+    const asset = p.assets.find((item) => item.kind === 'character' && p.shots[0].assetIds.includes(item.id))!
+    const png = join(root, 'portrait.png')
+    await writeFile(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'))
+    await importMedia(store, p.id, asset.id, 'reference', png)
+    await importMedia(store, p.id, p.shots[0].id, 'first', png)
+    const api = {
+      workflow: vi.fn().mockResolvedValue({ '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: '', length: 5 } } }),
+      upload: vi.fn().mockResolvedValue('character.png'),
+      start: vi.fn().mockResolvedValue('456'),
+    } as unknown as RunningHub
+    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[0].id], false)
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
+    const graph = vi.mocked(api.start).mock.calls[0][2]!
+    expect(graph['17'].inputs.prompt).toContain(asset.name)
+    expect(graph['17'].inputs.first_frame).toEqual(['18', 0])
+    expect(graph['18'].inputs.image).toBe('character.png')
+    expect(store.jobs()[0].referenceMediaId).toBe(store.project(p.id).assets.find((a) => a.id === asset.id)?.selectedMediaId)
+    expect(vi.mocked(api.upload).mock.calls[0][1]).toContain(store.jobs()[0].referenceMediaId)
+  })
+  it('waits for a regenerated previous shot before submitting the next shot', async () => {
+    const p = store.save(createProject('regeneration order', '16:9', true))
+    const video = join(root, 'old.mp4')
+    await writeFile(video, 'old video placeholder')
+    await importMedia(store, p.id, p.shots[0].id, 'video', video)
+    store.set('config', { ...defaultConfig, concurrency: 2 })
+    const api = {
+      workflow: vi.fn().mockResolvedValue({ '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: '', length: 5 } } }),
+      start: vi.fn().mockResolvedValue('789'),
+    } as unknown as RunningHub
+    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[0].id, p.shots[1].id], false)
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
+    expect(store.jobs().find((j) => j.shotId === p.shots[1].id)).toMatchObject({
+      status: 'queued', error: '等待上一镜头完成后自动衔接',
+    })
+  })
+  it('marks later videos stale when an earlier shot video changes', async () => {
+    const p = store.save(createProject('stale sequence', '16:9', true))
+    const file = join(root, 'shot.mp4')
+    await writeFile(file, 'video placeholder')
+    await importMedia(store, p.id, p.shots[0].id, 'video', file)
+    await importMedia(store, p.id, p.shots[1].id, 'video', file)
+    expect(store.project(p.id).shots[1].stale).toBe(false)
+    await importMedia(store, p.id, p.shots[0].id, 'video', file)
+    expect(store.project(p.id).shots[1].stale).toBe(true)
+  })
+  it('extracts the prior video last frame for a continuing shot', async () => {
+    const p = store.save(createProject('continuous shots', '16:9', true))
+    const video = join(root, 'first.mp4')
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x180:r=24',
+      '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video,
+    ], { windowsHide: true })
+    await importMedia(store, p.id, p.shots[0].id, 'video', video)
+    const alternate = join(root, 'alternate.png')
+    await writeFile(alternate, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'))
+    await importMedia(store, p.id, p.shots[1].id, 'first', alternate)
+    const uploaded: Buffer[] = []
+    const api = {
+      workflow: vi.fn().mockResolvedValue({ '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: '', length: 5 } } }),
+      upload: vi.fn().mockImplementation(async (_site: string, file: string) => {
+        uploaded.push(await readFile(file))
+        return 'last-frame.png'
+      }),
+      start: vi.fn().mockResolvedValue('987'),
+    } as unknown as RunningHub
+    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[1].id], false)
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1), { timeout: 10000 })
+    expect(uploaded[0].subarray(0, 8)).toEqual(Buffer.from('89504e470d0a1a0a', 'hex'))
+    const graph = vi.mocked(api.start).mock.calls[0][2]!
+    expect(graph['17'].inputs.first_frame).toEqual(['18', 0])
+    expect(graph['17'].inputs.prompt).toContain('紧接上一镜头')
+    expect(store.jobs()[0].previousShotId).toBe(p.shots[0].id)
+  }, 15000)
   it('never resubmits an interrupted submission when restarting', async () => {
     const j = makeJob('submitting')
     store.saveJob(j)

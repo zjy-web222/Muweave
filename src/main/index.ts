@@ -11,8 +11,9 @@ import {
 } from 'electron'
 import { join, extname, basename } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { createHash, randomUUID } from 'node:crypto'
 import mammoth from 'mammoth'
 import { ZodError } from 'zod'
 import {
@@ -138,16 +139,22 @@ if (primary)
     chatgpt = new ChatGPT(store, changed)
     codex = new CodexText(store)
     const api = new RunningHub(key)
-    queue = new Queue(store, api, changed)
+    queue = new Queue(store, api, changed, app.isPackaged ? process.resourcesPath : undefined)
     protocol.handle('media', async (request) => {
       try {
         const url = new URL(request.url),
-          [pid, mid] = url.pathname.split('/').filter(Boolean)
+          [pid, mid, revision] = url.pathname.split('/').filter(Boolean)
         id.parse(pid)
         id.parse(mid)
-        if (url.hostname !== 'asset') throw new Error('invalid')
-        const p = store.project(pid),
-          m = p.media.find((m) => m.id === mid)
+        const p = store.project(pid)
+        if (url.hostname === 'preview') {
+          if (!revision || !/^[a-f0-9]{16}$/.test(revision) ||
+              !p.episodes.some((episode) => episode.id === mid)) throw new Error('invalid')
+          return net.fetch(pathToFileURL(store.file(pid, `exports/preview-${mid}-${revision}.mp4`)).href,
+            { headers: request.headers })
+        }
+        if (url.hostname !== 'asset' || revision) throw new Error('invalid')
+        const m = p.media.find((m) => m.id === mid)
         if (!m) throw new Error('missing')
         return net.fetch(pathToFileURL(store.file(pid, m.file)).href, { headers: request.headers })
       } catch {
@@ -647,6 +654,40 @@ if (primary)
                 changed()
               }
             }
+            break
+          }
+          case 'previewEpisode': {
+            const p = store.project(c.projectId)
+            if (!p.episodes.some((episode) => episode.id === c.episodeId)) throw new Error('集不存在')
+            const shots = p.shots.filter((shot) => shot.episodeId === c.episodeId)
+            if (!shots.length || shots.some((shot) => !shot.videoMediaId))
+              throw new Error('请先为当前集每个镜头准备视频')
+            const revision = createHash('sha256').update(JSON.stringify({
+              aspect: p.aspect,
+              shots: shots.map((shot) => [shot.id, shot.videoMediaId, shot.audioMediaId, shot.duration]),
+            })).digest('hex').slice(0, 16)
+            const directory = store.file(p.id, 'exports')
+            const name = `preview-${c.episodeId}-${revision}.mp4`
+            const file = store.file(p.id, `exports/${name}`)
+            if (!existsSync(file)) {
+              await mkdir(directory, { recursive: true })
+              const partial = store.file(p.id, `exports/${name}.partial.mp4`)
+              const work = exporter.episode(store, p.id, c.episodeId, 'mp4', partial)
+              changed()
+              try {
+                await work
+                await rename(partial, file)
+                await rm(partial.replace(/\.mp4$/i, '') + '.srt', { force: true })
+                for (const old of await readdir(directory))
+                  if (old.startsWith(`preview-${c.episodeId}-`) && old !== name &&
+                      /^preview-[a-zA-Z0-9_-]+-[a-f0-9]{16}\.(mp4|srt)$/.test(old))
+                    await rm(store.file(p.id, `exports/${old}`), { force: true }).catch(() => undefined)
+              } finally {
+                await rm(partial, { force: true })
+                changed()
+              }
+            }
+            text = `media://preview/${p.id}/${c.episodeId}/${revision}`
             break
           }
           case 'cancelExport':

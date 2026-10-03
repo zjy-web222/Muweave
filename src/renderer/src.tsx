@@ -732,6 +732,7 @@ function App() {
                   <CutView
                     key={`${p.id}-${episodeId}`}
                     p={p}
+                    episodeId={episodeId}
                     shots={shots}
                     onSelect={(id) => {
                       chooseShot(id)
@@ -884,6 +885,9 @@ function App() {
                 {videoWorkflow.id} · {state.config.instanceType === 'plus' ? 'Plus' : 'Standard'}{' '}
                 {t('· 并发')} {state.config.concurrency}{' '}
                 {t('· 当前选择')} {batch.length} {t('镜头')}
+              </p>
+              <p className="small muted">
+                {t('首镜头使用关联人物的选定参考图；后续镜头等待上一镜头完成，并使用其末帧作为首帧。镜头首帧图片不会覆盖这一衔接。')}
               </p>
               {!state.hasKey && (
                 <Button onClick={() => setSettings(true)}>{t('先绑定 RunningHub Key')}</Button>
