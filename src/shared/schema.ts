@@ -47,6 +47,15 @@ export const shotSchema = z.object({
   stale: z.boolean().default(false),
 })
 export type Shot = z.infer<typeof shotSchema>
+export const scriptArchiveSchema = z.object({
+  id,
+  episodeId: id,
+  title: z.string().max(200),
+  script: text,
+  shots: z.array(shotSchema).max(2000),
+  createdAt: z.string(),
+})
+export type ScriptArchive = z.infer<typeof scriptArchiveSchema>
 export const chatAttachmentSchema = z.object({
   id,
   name: z.string().min(1).max(255),
@@ -89,6 +98,7 @@ export const projectSchema = z.object({
     )
     .max(200),
   shots: z.array(shotSchema).max(2000),
+  scriptArchives: z.array(scriptArchiveSchema).default([]),
   assets: z.array(assetSchema).max(1000),
   media: z.array(mediaSchema).max(10000),
   groups: z

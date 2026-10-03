@@ -19,6 +19,30 @@ export function inside(root: string, file: string) {
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error('无效的项目文件路径')
   return target
 }
+const unfinished = new Set(['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'])
+export function replaceEpisodeScript(p: Project, episodeId: string, script: string, jobs: Job[]) {
+  const episode = p.episodes.find((item) => item.id === episodeId)
+  if (!episode) throw new Error('集不存在')
+  if (episode.script === script) return false
+  const shots = p.shots.filter((shot) => shot.episodeId === episodeId)
+  const shotIds = new Set(shots.map((shot) => shot.id))
+  if (jobs.some((job) => job.projectId === p.id && shotIds.has(job.shotId) && unfinished.has(job.status)))
+    throw new Error('此集还有未完成的视频任务，请先完成或取消任务，再更新剧本')
+  if (episode.script || shots.length)
+    p.scriptArchives.push({
+      id: randomUUID(),
+      episodeId,
+      title: episode.title,
+      script: episode.script,
+      shots: structuredClone(shots),
+      createdAt: new Date().toISOString(),
+    })
+  p.shots = p.shots.filter((shot) => shot.episodeId !== episodeId)
+  for (const group of p.groups) group.shotIds = group.shotIds.filter((shotId) => !shotIds.has(shotId))
+  for (const shotId of shotIds) delete p.layout[shotId]
+  episode.script = script
+  return true
+}
 export class Store {
   db: DatabaseSync
   constructor(public root: string) {
@@ -123,6 +147,9 @@ export class Store {
     const p = projectSchema.parse(JSON.parse(String(row.document)))
     const current = this.project(id)
     p.media = current.media
+    const archives = new Map(current.scriptArchives.map((archive) => [archive.id, archive]))
+    for (const archive of p.scriptArchives) archives.set(archive.id, archive)
+    p.scriptArchives = [...archives.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     p.revision = current.revision
     return this.save(p)
   }
@@ -153,6 +180,7 @@ export function createProject(
       { id: ep, title: locale === 'en' ? 'Episode 1' : '第一集', script: '', scriptChat: [] },
     ],
     shots: [],
+    scriptArchives: [],
     assets: [],
     media: [],
     groups: [],

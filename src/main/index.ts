@@ -33,7 +33,7 @@ import {
   parseScriptChatReply,
   storyboardResponseJsonSchema,
 } from '../shared/director'
-import { Store, createProject } from './store'
+import { Store, createProject, replaceEpisodeScript } from './store'
 import { ChatGPT } from './chatgpt'
 import { CodexText } from './codex'
 import { prepareChatFile } from './chat-files'
@@ -188,7 +188,11 @@ if (primary)
             store.update(c.projectId, (p) => {
               const ep = c.episodeId ? p.episodes.find((e) => e.id === c.episodeId) : undefined
               if (c.episodeId && !ep) throw new Error('集不存在')
-              if (ep) Object.assign(ep, { title: c.title, script: c.script })
+              if (ep) {
+                const updated = replaceEpisodeScript(p, ep.id, c.script, store.jobs())
+                ep.title = c.title
+                if (updated) message = '旧剧本与镜头视频已存档；导演台已切换到新剧本，请生成新版分镜'
+              }
               else
                 p.episodes.push({
                   id: randomUUID(),
@@ -519,20 +523,24 @@ if (primary)
                 ? (await mammoth.extractRawText({ path: file })).value
                 : await readFile(file, 'utf8')
             if (raw.length > 200000) throw new Error('请将文本拆分至 20 万字以内')
+            let scriptUpdated = false
             store.update(c.projectId, (p) => {
               p.source = raw
               const e = p.episodes.find((e) => e.id === c.episodeId)
-              if (e) e.script = raw
+              if (!e) throw new Error('集不存在')
+              scriptUpdated = replaceEpisodeScript(p, e.id, raw, store.jobs())
             })
-            message = '已导入文本'
+            message = scriptUpdated ? '已导入新剧本；旧剧本与镜头视频已存档' : '已导入文本'
             break
           }
           case 'parse': {
             const result = parseDirector(c.raw)
+            let scriptUpdated = false
             store.update(c.projectId, (p) => {
               const ep = p.episodes.find((e) => e.id === c.episodeId)
               if (!ep) throw new Error('集不存在')
-              if (result.script !== undefined) ep.script = result.script
+              if (result.script !== undefined)
+                scriptUpdated = replaceEpisodeScript(p, ep.id, result.script, store.jobs())
               if (result.episodeTitle) ep.title = result.episodeTitle
               for (const a of result.assets || []) {
                 const existing = p.assets.find((o) => o.name === a.name && o.kind === a.kind)
@@ -552,7 +560,9 @@ if (primary)
                 )
             })
             message =
-              result.script === undefined && !result.assets?.length
+              scriptUpdated
+                ? `旧剧本与镜头视频已存档，已为新剧本添加 ${result.shots?.length || 0} 个镜头`
+                : result.script === undefined && !result.assets?.length
                 ? `已追加 ${result.shots?.length || 0} 个分镜到当前集`
                 : `已更新剧本/资产，追加 ${result.shots?.length || 0} 个镜头；旧镜头未覆盖`
             break

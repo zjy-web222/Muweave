@@ -48,6 +48,7 @@ export function ScriptEditor({
     [chatBusy, setChatBusy] = useState(false),
     [attachedFiles, setAttachedFiles] = useState<{ id: string; name: string; size: number }[]>([]),
     [accountConnected, setAccountConnected] = useState<boolean | null | 'error'>(null)
+  const draftRef = useRef({ episodeId, title: ep.title, script: ep.script, dirty: false })
   const historyRef = useRef<HTMLDivElement>(null)
   const turns = p.episodes
     .flatMap((episode, index) =>
@@ -58,6 +59,9 @@ export function ScriptEditor({
         a.turn.createdAt.localeCompare(b.turn.createdAt) || a.index - b.index || a.order - b.order,
     )
   useEffect(() => {
+    if (draftRef.current.episodeId === ep.id && draftRef.current.dirty &&
+        (draftRef.current.script !== ep.script || draftRef.current.title !== ep.title)) return
+    draftRef.current = { episodeId: ep.id, title: ep.title, script: ep.script, dirty: false }
     setScript(ep.script)
     setTitle(ep.title)
     setDirty(false)
@@ -73,18 +77,24 @@ export function ScriptEditor({
     return () => window.removeEventListener('director:codex-login', refresh)
   }, [p.id, run])
   async function save() {
-    const r = await run({ type: 'episode', projectId: p.id, episodeId, title, script })
-    if (r.ok) setDirty(false)
+    const draft = { ...draftRef.current }
+    const r = await run({ type: 'episode', projectId: p.id, episodeId: draft.episodeId,
+      title: draft.title, script: draft.script })
+    if (r.ok && draftRef.current.episodeId === draft.episodeId &&
+        draftRef.current.title === draft.title && draftRef.current.script === draft.script) {
+      draftRef.current.dirty = false
+      setDirty(false)
+    }
     return r.ok
   }
   const saveRef = useRef(save)
   saveRef.current = save
+  beforeEpisodeChange.current = async () => !draftRef.current.dirty || (await saveRef.current())
   useEffect(() => {
-    beforeEpisodeChange.current = async () => !dirty || (await saveRef.current())
     return () => {
       beforeEpisodeChange.current = null
     }
-  }, [beforeEpisodeChange, dirty])
+  }, [beforeEpisodeChange])
   useEffect(() => {
     if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
   }, [turns.length, p.id])
@@ -105,7 +115,7 @@ export function ScriptEditor({
     if ((!request && !attachedFiles.length) || chatBusy) return
     setChatBusy(true)
     try {
-      if (dirty && !(await save())) return
+      if (draftRef.current.dirty && !(await save())) return
       const generated = await run({
         type: 'scriptChatGenerate',
         projectId: p.id,
@@ -125,7 +135,7 @@ export function ScriptEditor({
     if (chatBusy) return
     setChatBusy(true)
     try {
-      if (dirty && !(await save())) return
+      if (draftRef.current.dirty && !(await save())) return
       const applied = await run({
         type: 'episode',
         projectId: p.id,
@@ -135,6 +145,7 @@ export function ScriptEditor({
       })
       if (applied.ok) {
         if (targetEpisodeId === episodeId) {
+          draftRef.current = { episodeId, title, script: next, dirty: false }
           setScript(next)
           setDirty(false)
         } else await onEpisodeChange(targetEpisodeId)
@@ -168,6 +179,8 @@ export function ScriptEditor({
               aria-label={t('集标题')}
               value={title}
               onChange={(e) => {
+                draftRef.current.title = e.target.value
+                draftRef.current.dirty = true
                 setTitle(e.target.value)
                 setDirty(true)
               }}
@@ -203,6 +216,8 @@ export function ScriptEditor({
             aria-label={t('剧本正文')}
             value={script}
             onChange={(e) => {
+              draftRef.current.script = e.target.value
+              draftRef.current.dirty = true
               setScript(e.target.value)
               setDirty(true)
             }}

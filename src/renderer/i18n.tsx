@@ -39,6 +39,25 @@ export const en: Record<string, string> = {
   切换主题: 'Switch theme',
   本地已保存: 'Saved locally',
   项目版本历史: 'Project history',
+  剧本与视频存档: 'Script and video archive',
+  '保存每次剧本更新前的正文、分镜和视频；当前导演台只显示新版分镜。':
+    'Keeps the script, shots and videos from before each script update. The director board shows only the new version.',
+  '还没有剧本存档。更新已有剧本后会自动保存旧版。':
+    'No script archives yet. Updating a saved script will archive its previous version.',
+  旧版剧本: 'Previous script',
+  旧版分镜与视频: 'Previous shots and videos',
+  此版本没有剧本文字: 'This version has no script text',
+  '当前导演台使用新版剧本，请从剧本拆解分镜：':
+    'The director board uses the updated script. Generate new shots from it:',
+  有视频: 'Video ready',
+  '旧剧本与镜头视频已存档；导演台已切换到新剧本，请生成新版分镜':
+    'The previous script and shot videos were archived. Generate new shots for the updated script.',
+  '已导入新剧本；旧剧本与镜头视频已存档':
+    'New script imported; the previous script and shot videos were archived.',
+  '此集还有未完成的视频任务，请先完成或取消任务，再更新剧本':
+    'Finish or cancel this episode’s video jobs before updating its script.',
+  '旧剧本镜头已存档，不能重新提交视频任务':
+    'This shot was archived with the previous script and cannot be resubmitted.',
   '导出 / 存档': 'Export / Archive',
   剧本: 'Script',
   资产库: 'Assets',
@@ -561,6 +580,8 @@ export function translate(locale: Locale, text: string): string {
     return `Script and assets updated; ${updated[1]} shots added without replacing existing shots`
   const storyboard = /^已追加 (\d+) 个分镜到当前集$/.exec(text)
   if (storyboard) return `${storyboard[1]} shots added to the current episode`
+  const archived = /^旧剧本与镜头视频已存档，已为新剧本添加 (\d+) 个镜头$/.exec(text)
+  if (archived) return `Previous script and videos archived; ${archived[1]} new shots added`
   const download = /^视频下载失败 HTTP (\d+)$/.exec(text)
   if (download) return `Video download failed: HTTP ${download[1]}`
   return text

@@ -691,6 +691,7 @@ small,
   margin: 0 8px;
   color: var(--faint);
 }
+.board-heading-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .canvas-toolbar {
   display: flex;
   align-items: center;
@@ -2076,6 +2077,79 @@ small,
 .history-list small {
   display: block;
   margin-top: 4px;
+}
+.script-archive-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 22px;
+  min-height: 370px;
+}
+.script-archive-list,
+.script-archive-detail {
+  min-width: 0;
+}
+.script-archive-list button,
+.script-archive-shot-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin-bottom: 7px;
+  font-size: 11px;
+}
+.script-archive-list button.selected,
+.script-archive-shot-list button.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.script-archive-list button small,
+.script-archive-list button span {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.script-archive-detail h3 { margin-bottom: 12px; }
+.script-archive-text {
+  white-space: pre-wrap;
+  overflow: auto;
+  max-height: 210px;
+  padding: 12px;
+  margin: 8px 0 18px;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: inherit;
+}
+.script-archive-shot-list {
+  max-height: 130px;
+  overflow: auto;
+  margin: 8px 0 12px;
+}
+.script-archive-preview .media-preview,
+.script-archive-preview .media-placeholder {
+  width: 100%;
+  max-height: 280px;
+  background: var(--canvas);
+}
+.script-archive-preview p { margin-top: 8px; }
+.script-archive-versions { display: flex; gap: 6px; margin-bottom: 8px; }
+.script-archive-versions button {
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 11px;
+}
+.script-archive-versions button.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+@media (max-width: 760px) {
+  .script-archive-layout { grid-template-columns: 1fr; }
+  .script-archive-list { max-height: 160px; overflow: auto; }
 }
 .toast,
 .error-toast {

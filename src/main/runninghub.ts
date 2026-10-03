@@ -519,6 +519,8 @@ export class Queue {
   }
   async action(id: string, action: 'cancel' | 'retry' | 'resume' | 'attach', taskId?: string) {
     const j = this.store.job(id)
+    if (action !== 'cancel' && !this.store.project(j.projectId).shots.some((shot) => shot.id === j.shotId))
+      throw new Error('旧剧本镜头已存档，不能重新提交视频任务')
     if (this.busy.has(id)) throw new Error('任务正在同步或下载，请稍后重试')
     this.busy.add(id)
     try {

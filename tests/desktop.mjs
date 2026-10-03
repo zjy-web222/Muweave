@@ -48,6 +48,18 @@ try {
   const project = snapshot.state.projects[0],
     shot = project.shots[0]
   assert.equal(shot.title, '桌面测试 · 已保存的镜头')
+  const archivedVideo = join(data, 'archived-shot.mp4')
+  execFileSync('ffmpeg', [
+    '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=320x180:r=24',
+    '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', archivedVideo,
+  ], { windowsHide: true })
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] })
+  }, archivedVideo)
+  assert((await page.evaluate(
+    ({ pid, sid }) => window.director.command({ type: 'importMedia', projectId: pid, ownerId: sid, slot: 'video' }),
+    { pid: project.id, sid: shot.id },
+  )).ok)
   await page.getByRole('button', { name: 'AI 拆解分镜' }).click()
   const storyboardDialog = page.getByRole('dialog', { name: 'AI 生成分镜' })
   await storyboardDialog.waitFor()
@@ -76,6 +88,17 @@ try {
   await page.getByRole('button', { name: '保存剧本', exact: true }).click()
   await page.getByRole('button', { name: '已保存', exact: true }).waitFor()
   await page.screenshot({ path: join(evidence, '03-script-editor.png') })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects[0].shots.length, 0)
+  assert.equal(snapshot.state.projects[0].scriptArchives.length, 1)
+  assert(snapshot.state.projects[0].scriptArchives[0].shots[0].videoMediaId)
+  await page.getByRole('button', { name: '剧本与视频存档' }).click()
+  const scriptArchiveDialog = page.getByRole('dialog', { name: '剧本与视频存档' })
+  await scriptArchiveDialog.getByText('旧版剧本').waitFor()
+  assert.match(await scriptArchiveDialog.locator('.script-archive-text').innerText(), /深夜，林舟/)
+  assert.match(await scriptArchiveDialog.locator('video').getAttribute('src'), /^media:\/\/asset\//)
+  await scriptArchiveDialog.screenshot({ path: join(evidence, '03-script-video-archive.png') })
+  await scriptArchiveDialog.getByRole('button', { name: '关闭对话框' }).click()
   assert.equal(await page.getByRole('button', { name: '导入 TXT / MD / DOCX' }).count(), 0)
   assert.equal(await page.getByText('创作路线').count(), 0)
   await page.getByLabel('发送到当前集').fill('把结尾改成悬念。')
@@ -110,6 +133,7 @@ try {
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   assert.equal(snapshot.state.projects[0].episodes[0].script, '新版悬念剧本。')
   assert.equal(snapshot.state.projects[0].episodes[0].scriptChat.length, 2)
+  assert.equal(snapshot.state.projects[0].scriptArchives.length, 2)
   await page.getByRole('button', { name: '添加分集' }).click()
   await page.getByLabel('集名称').fill('第二集')
   await page.getByRole('button', { name: '创建分集' }).click()
@@ -245,7 +269,13 @@ try {
   await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
   await page.locator('.episode-nav .nav-select').first().click()
   await page.getByRole('button', { name: '导演台 03' }).click()
+  await page.getByText('当前导演台使用新版剧本，请从剧本拆解分镜：').waitFor()
+  await page.screenshot({ path: join(evidence, '05-updated-director-script.png') })
+  await page.getByRole('button', { name: '镜头', exact: true }).click()
   await page.locator('.shot-list article').first().click()
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  const currentShot = snapshot.state.projects[0].shots.find((item) => item.episodeId === project.episodes[0].id)
+  assert(currentShot)
   await page.getByRole('button', { name: '素材与版本' }).click()
   await page.getByRole('button', { name: 'ChatGPT 生图' }).first().click()
   const imageDialog = page.getByRole('dialog', { name: /ChatGPT 生图/ })
@@ -268,10 +298,10 @@ try {
   const imported = await page.evaluate(
     async ({ pid, sid }) =>
       window.director.command({ type: 'importMedia', projectId: pid, ownerId: sid, slot: 'first' }),
-    { pid: project.id, sid: shot.id },
+    { pid: project.id, sid: currentShot.id },
   )
   assert(imported.ok)
-  const mediaId = imported.state.projects[0].media.find((m) => m.ownerId === shot.id && m.slot === 'first').id
+  const mediaId = imported.state.projects[0].media.find((m) => m.ownerId === currentShot.id && m.slot === 'first').id
   const load = await page.evaluate(
     async ({ pid, mid }) =>
       new Promise((resolve) => {
@@ -298,7 +328,7 @@ try {
   const restored = await page.evaluate(() => window.director.command({ type: 'importArchive' }))
   assert(restored.ok, restored.error)
   assert.equal(restored.state.projects.length, 2)
-  assert.equal(restored.state.projects[0].media.length, 2)
+  assert.equal(restored.state.projects[0].media.length, 3)
   const restoredProject = restored.state.projects.find((item) => item.id !== project.id)
   await app.evaluate(({ dialog }) => {
     dialog.showSaveDialog = async () => { throw new Error('Project removal must not open a backup dialog') }
@@ -423,10 +453,8 @@ try {
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   assert(snapshot.ok)
   assert.equal(snapshot.state.projects.length, 1)
-  assert.equal(
-    snapshot.state.projects.find((p) => p.id === project.id).shots[0].title,
-    '桌面测试 · 已保存的镜头',
-  )
+  assert.equal(snapshot.state.projects.find((p) => p.id === project.id).scriptArchives[0].shots[0].title,
+    '桌面测试 · 已保存的镜头')
   assert.equal(
     snapshot.state.projects.find((p) => p.id === project.id).episodes[0].scriptChat.length,
     2,
@@ -459,6 +487,7 @@ try {
           'direct AI storyboard generation dialog',
           'shot edit',
           'script edit',
+          'script and video archive on script revision',
           'episode switching and unsaved draft persistence',
           'project-wide chat and cross-episode script apply',
           'any-extension attachment picker',

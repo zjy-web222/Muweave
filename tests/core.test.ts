@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { zipSync, strToU8 } from 'fflate'
-import { Store, createProject, inside } from '../src/main/store'
+import { Store, createProject, inside, replaceEpisodeScript } from '../src/main/store'
 import { codexFinalMessage } from '../src/main/codex'
 import { codexImageBytes } from '../src/main/codex-image'
 import { prepareChatFile } from '../src/main/chat-files'
@@ -83,6 +83,66 @@ describe('local project state', () => {
     expect(store.history(p.id)).toHaveLength(1)
     store.restore(p.id, revision)
     expect(store.project(p.id).title).toBe('A')
+  })
+  it('archives the old script and video before replacing the active director shots', async () => {
+    const p = store.save(createProject('revised film', '16:9', true))
+    const oldScript = p.episodes[0].script
+    const file = join(root, 'previous.mp4')
+    await writeFile(file, 'archived video bytes')
+    const media = await importMedia(store, p.id, p.shots[0].id, 'video', file)
+    const media2 = await importMedia(store, p.id, p.shots[0].id, 'video', file)
+    store.update(p.id, (project) => {
+      expect(replaceEpisodeScript(project, p.episodes[0].id, '全新的剧本与对白', [])).toBe(true)
+      expect(replaceEpisodeScript(project, p.episodes[0].id, '全新的剧本与对白', [])).toBe(false)
+    })
+    const current = store.project(p.id)
+    expect(current.episodes[0].script).toBe('全新的剧本与对白')
+    expect(current.shots).toHaveLength(0)
+    expect(current.scriptArchives).toHaveLength(1)
+    expect(current.scriptArchives[0].script).toBe(oldScript)
+    expect(current.scriptArchives[0].shots[0].videoMediaId).toBe(media2.id)
+    expect(current.media.find((item) => item.id === media.id)).toBeDefined()
+    expect(current.media.find((item) => item.id === media2.id)).toBeDefined()
+    const oldJob: Job = {
+      id: crypto.randomUUID(), projectId: p.id, shotId: p.shots[0].id,
+      status: 'failed', site: defaultConfig.site, workflowId: videoWorkflow.id,
+      mappings: [], snapshot: p.shots[0], createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(), pollErrors: 0, outputs: [], stopOnFailure: false,
+    }
+    store.saveJob(oldJob)
+    await expect(new Queue(store, {} as RunningHub, () => {}).action(oldJob.id, 'retry'))
+      .rejects.toThrow('旧剧本镜头已存档')
+    const target = join(root, 'revised.director.zip')
+    await exportArchive(store, p.id, target)
+    const restored = await restoreArchive(store, target)
+    expect(restored.scriptArchives[0].shots[0].videoMediaId).toBe(media2.id)
+    expect(await readFile(store.file(restored.id, restored.media.find((item) => item.id === media.id)!.file), 'utf8'))
+      .toBe('archived video bytes')
+    const oldRevision = store.history(p.id).at(-1)!.revision as number
+    store.restore(p.id, oldRevision)
+    expect(store.project(p.id).scriptArchives).toHaveLength(1)
+    const restoredProject = store.project(p.id)
+    expect(replaceEpisodeScript(restoredProject, restoredProject.episodes[0].id,
+      restoredProject.episodes[0].script, store.jobs())).toBe(false)
+  })
+  it('keeps other episodes and blocks archiving while a paid video job is unfinished', () => {
+    const p = store.save(createProject('episodes', '16:9', true))
+    const second = crypto.randomUUID()
+    store.update(p.id, (project) => {
+      project.episodes.push({ id: second, title: '第二集', script: '第二集剧本', scriptChat: [] })
+      project.shots.push({ ...structuredClone(project.shots[0]), id: crypto.randomUUID(), episodeId: second })
+    })
+    store.set('config', { ...defaultConfig, paused: true })
+    new Queue(store, {} as RunningHub, () => {}).enqueue(p.id, [p.shots[0].id], false)
+    expect(() => store.update(p.id, (project) =>
+      replaceEpisodeScript(project, p.episodes[0].id, '不能现在更新', store.jobs()),
+    )).toThrow('未完成的视频任务')
+    expect(store.project(p.id).scriptArchives).toHaveLength(0)
+    const job = store.jobs()[0]
+    job.status = 'cancelled'
+    store.saveJob(job)
+    store.update(p.id, (project) => replaceEpisodeScript(project, p.episodes[0].id, '第一集新版', store.jobs()))
+    expect(store.project(p.id).shots.map((shot) => shot.episodeId)).toEqual([second])
   })
   it('rejects traversal and invalid IPC arguments', () => {
     expect(() => inside(root, '../../outside')).toThrow()

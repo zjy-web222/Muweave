@@ -101,6 +101,10 @@ function App() {
     [groupName, setGroupName] = useState(''),
     [groups, setGroups] = useState(false),
     [history, setHistory] = useState<{ revision: number; created: string }[] | null>(null),
+    [scriptArchiveOpen, setScriptArchiveOpen] = useState(false),
+    [scriptArchiveId, setScriptArchiveId] = useState(''),
+    [archiveShotId, setArchiveShotId] = useState(''),
+    [archiveVideoId, setArchiveVideoId] = useState(''),
     [newEpisode, setNewEpisode] = useState(false),
     [episodeTitle, setEpisodeTitle] = useState('第二集')
   const t = (text: string) => translate(state?.config.locale || 'zh', text)
@@ -162,6 +166,13 @@ function App() {
       state?.jobs.filter((j) =>
         ['queued', 'running', 'submitting', 'downloading'].includes(j.status),
       ) || []
+  const selectedArchive = p?.scriptArchives.find((item) => item.id === scriptArchiveId) ||
+    p?.scriptArchives.at(-1)
+  const archivedShot = selectedArchive?.shots.find((item) => item.id === archiveShotId) ||
+    selectedArchive?.shots[0]
+  const archivedVideos = p?.media.filter((media) => media.ownerId === archivedShot?.id && media.slot === 'video') || []
+  const archivedVideo = archivedVideos.find((media) => media.id === archiveVideoId) ||
+    archivedVideos.find((media) => media.id === archivedShot?.videoMediaId) || archivedVideos.at(-1)
   useEffect(() => {
     if (!state) return
     document.documentElement.dataset.theme = state.config.theme
@@ -452,6 +463,14 @@ function App() {
                     >
                       <History size={16} />
                     </button>
+                    <button
+                      className="icon-button"
+                      aria-label={t('剧本与视频存档')}
+                      title={t('剧本与视频存档')}
+                      onClick={() => setScriptArchiveOpen(true)}
+                    >
+                      <FolderArchive size={16} />
+                    </button>
                     <Button onClick={() => setExporting(true)}>
                       <Download size={14} />
                       {t('导出 / 存档')}
@@ -519,10 +538,16 @@ function App() {
                             {shots.filter((s) => s.videoMediaId).length} {t('个视频就绪')}
                           </p>
                         </div>
-                        <Button primary onClick={() => setGenerator({ kind: 'storyboard' })}>
-                          <Sparkles size={14} />
-                          {t('AI 拆解分镜')}
-                        </Button>
+                        <div className="board-heading-actions">
+                          <Button onClick={() => setScriptArchiveOpen(true)}>
+                            <FolderArchive size={14} />
+                            {t('剧本与视频存档')}
+                          </Button>
+                          <Button primary onClick={() => setGenerator({ kind: 'storyboard' })}>
+                            <Sparkles size={14} />
+                            {t('AI 拆解分镜')}
+                          </Button>
+                        </div>
                       </div>
                       <div className="canvas-toolbar">
                         <div className="segmented">
@@ -659,9 +684,9 @@ function App() {
                           >
                             {query
                               ? t('试试其他标题、动作或场景关键词。')
-                              : t(
-                                  '从剧本拆解，或手动新建镜头。脚本、画面与视频在同一张画布上连接。',
-                                )}
+                              : episode?.script
+                                ? `${t('当前导演台使用新版剧本，请从剧本拆解分镜：')} ${episode.script.slice(0, 130)}${episode.script.length > 130 ? '…' : ''}`
+                                : t('从剧本拆解，或手动新建镜头。脚本、画面与视频在同一张画布上连接。')}
                           </Empty>
                         )}
                         {view === 'canvas' && filtered.length > 0 && (
@@ -1012,6 +1037,74 @@ function App() {
                 </div>
               ))}
               {!history.length && <p>{t('还没有历史修改。')}</p>}
+            </div>
+          </Modal>
+        )}
+        {scriptArchiveOpen && p && (
+          <Modal
+            title={t('剧本与视频存档')}
+            subtitle={t('保存每次剧本更新前的正文、分镜和视频；当前导演台只显示新版分镜。')}
+            wide
+            onClose={() => setScriptArchiveOpen(false)}
+          >
+            <div className="modal-body script-archive-layout">
+              <div className="script-archive-list">
+                {[...p.scriptArchives].reverse().map((archive) => (
+                  <button
+                    key={archive.id}
+                    className={archive.id === selectedArchive?.id ? 'selected' : ''}
+                    onClick={() => { setScriptArchiveId(archive.id); setArchiveShotId(''); setArchiveVideoId('') }}
+                  >
+                    <strong>{archive.title}</strong>
+                    <small>{new Date(archive.createdAt).toLocaleString()}</small>
+                    <span>{archive.shots.length} {t('个镜头')} · {archive.shots.filter((s) => s.videoMediaId).length} {t('个视频就绪')}</span>
+                  </button>
+                ))}
+                {!p.scriptArchives.length && <p className="small muted">{t('还没有剧本存档。更新已有剧本后会自动保存旧版。')}</p>}
+              </div>
+              {selectedArchive && (
+                <div className="script-archive-detail">
+                  <h3>{selectedArchive.title}</h3>
+                  <span className="small muted">{t('旧版剧本')}</span>
+                  <pre className="script-archive-text">{selectedArchive.script || t('此版本没有剧本文字')}</pre>
+                  {!!selectedArchive.shots.length && (
+                    <>
+                      <span className="small muted">{t('旧版分镜与视频')}</span>
+                      <div className="script-archive-shot-list">
+                        {selectedArchive.shots.map((item, i) => (
+                          <button
+                            key={item.id}
+                            className={item.id === archivedShot?.id ? 'selected' : ''}
+                            onClick={() => { setArchiveShotId(item.id); setArchiveVideoId('') }}
+                          >
+                            {String(i + 1).padStart(2, '0')} · {item.title}
+                            {item.videoMediaId ? ` · ${t('有视频')}` : ''}
+                          </button>
+                        ))}
+                      </div>
+                      {archivedShot && (
+                        <div className="script-archive-preview">
+                          {archivedVideos.length > 1 && (
+                            <div className="script-archive-versions">
+                              {archivedVideos.map((video, index) => (
+                                <button
+                                  key={video.id}
+                                  className={video.id === archivedVideo?.id ? 'selected' : ''}
+                                  onClick={() => setArchiveVideoId(video.id)}
+                                >
+                                  v{index + 1}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          <Preview p={p} mediaId={archivedVideo?.id} slot="video" controls />
+                          <p className="small muted">{archivedShot.action} {archivedShot.dialogue}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </Modal>
         )}
