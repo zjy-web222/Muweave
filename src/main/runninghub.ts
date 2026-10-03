@@ -18,6 +18,21 @@ export class RejectedRequest extends Error {
 }
 type ApiNode = { class_type: string; inputs: Record<string, unknown>; _meta?: Record<string, unknown> }
 type ApiWorkflow = Record<string, ApiNode>
+const coinOnlyNodes = new Set([
+  'BasicGuider', 'BasicScheduler', 'CLIPLoader', 'ComfyMathExpression', 'CreateVideo',
+  'KSamplerSelect', 'LoadImage', 'LoadVideo', 'MiniMaxH3ImageToVideo', 'PrimitiveFloat',
+  'RandomNoise', 'ResolutionSelector', 'SamplerCustomAdvanced', 'SaveVideo', 'UNETLoader',
+  'VAEDecode', 'VAEDecodeAudio', 'VAELoader', 'RHMiniMaxH3DecodeAV',
+  'RHMiniMaxH3DualSigmaSampler', 'RHMiniMaxH3EmptyAVLatent', 'RHMiniMaxH3Ref2VAEncode',
+  'RHMiniMaxH3Ref2VAImageReference', 'RHMiniMaxH3Ref2VAModelLoader',
+  'RHMiniMaxH3Ref2VATarget', 'RHMiniMaxH3Ref2VATextEncoderLoader',
+  'RHMiniMaxH3Ref2VAVAELoader', 'RHMiniMaxH3Ref2VAVideoReference',
+])
+export function assertCoinOnlyWorkflow(source: unknown) {
+  const graph = apiWorkflowSchema.parse(source)
+  const unsafe = Object.values(graph).find((node) => !coinOnlyNodes.has(node.class_type))
+  if (unsafe) throw new Error(`工作流包含未核准的「${unsafe.class_type}」节点，可能扣钱包余额；已阻止提交`)
+}
 const apiWorkflowSchema = z.record(
   z.string(),
   z.object({ class_type: z.string(), inputs: z.record(z.string(), z.unknown()) }).passthrough(),
@@ -222,8 +237,19 @@ export class RunningHub {
     const data = z.object({ prompt: z.string() }).parse(result)
     return apiWorkflowSchema.parse(JSON.parse(data.prompt))
   }
-  async account(c: Config) {
+  async account(c: { site: string }) {
     return this.request(c.site, '/uc/openapi/accountStatus', { apikey: this.key() })
+  }
+  async coinAccount(site: string) {
+    const account = z.object({
+      apiType: z.string(),
+      remainCoins: z.coerce.number(),
+    }).parse(await this.account({ site }))
+    if (account.apiType !== 'NORMAL')
+      throw new Error('当前 RunningHub Key 会使用钱包计费。请在 RunningHub 绑定「消费级-会员」Key；视频任务未提交')
+    if (account.remainCoins <= 0)
+      throw new Error('当前 RunningHub 账户没有可用 RH 币；视频任务未提交')
+    return account
   }
   async upload(site: string, file: string) {
     const form = new FormData()
@@ -239,6 +265,11 @@ export class RunningHub {
     nodeInfoList: { nodeId: string; fieldName: string; fieldValue: string | number }[],
     workflow?: ApiWorkflow,
   ) {
+    const checkedKey = this.key()
+    await this.coinAccount(j.site)
+    assertCoinOnlyWorkflow(workflow || await this.workflow(j))
+    if (this.key() !== checkedKey)
+      throw new Error('RunningHub Key 在计费检查后发生变化，已阻止提交；请重新生成')
     return z
       .object({
         taskId: z.union([z.string().regex(/^\d+$/), z.number().int().safe()]).transform(String),
@@ -422,7 +453,7 @@ export class Queue {
       void this.poll(j)
     if (c.paused) return
     let slots =
-      c.concurrency -
+      Math.min(1, c.concurrency) -
       jobs.filter((j) => ['submitting', 'running', 'downloading', 'uncertain'].includes(j.status))
         .length
     for (const j of jobs.filter((j) => j.status === 'queued').reverse()) {

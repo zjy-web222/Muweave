@@ -19,7 +19,7 @@ import {
   toSrt,
   escapeHtml,
 } from '../src/shared/director'
-import { Queue, RunningHub, RejectedRequest, inputsChanged, prepareVideoWorkflow, sameScene, videoPromptWithAssets } from '../src/main/runninghub'
+import { Queue, RunningHub, RejectedRequest, assertCoinOnlyWorkflow, inputsChanged, prepareVideoWorkflow, sameScene, videoPromptWithAssets } from '../src/main/runninghub'
 import {
   blankShot,
   commandSchema,
@@ -517,14 +517,39 @@ describe('safe paid-job lifecycle', () => {
   it.each(['plus', 'default'] as const)('sends the complete workflow with %s instance', async (instanceType) => {
     const j = makeJob()
     j.instanceType = instanceType
-    const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({ code: 0, data: { taskId: '987' } }), { status: 200 }))
+    const transport = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify({
+      code: 0,
+      data: url.endsWith('/accountStatus')
+        ? { apiType: 'NORMAL', remainCoins: '100' }
+        : { taskId: '987' },
+    }), { status: 200 }))
     const api = new RunningHub(() => 'local-test-key', transport)
     expect(await api.start(j, [], { '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: 'test' } } })).toBe('987')
-    const [url, options] = transport.mock.calls[0]
+    const [url, options] = transport.mock.calls[1]
     const body = JSON.parse(options.body)
     expect(url).toBe(`${j.site}/task/openapi/create`)
     expect(body).toMatchObject({ instanceType, workflowId: j.workflowId, apiKey: 'local-test-key' })
     expect(JSON.parse(body.workflow)['17'].inputs.prompt).toBe('test')
+  })
+  it('refuses wallet-billed keys before creating a task', async () => {
+    const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 0, data: { apiType: 'SHARED', remainCoins: '1000' },
+    }), { status: 200 }))
+    const api = new RunningHub(() => 'local-test-key', transport)
+    await expect(api.start(makeJob(), [], directorRef2vaGraph)).rejects.toThrow('钱包计费')
+    expect(transport).toHaveBeenCalledTimes(1)
+    expect(transport.mock.calls[0][0]).toContain('/accountStatus')
+  })
+  it('refuses unknown workflow nodes even with a coin-billed key', async () => {
+    const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 0, data: { apiType: 'NORMAL', remainCoins: '1000' },
+    }), { status: 200 }))
+    const api = new RunningHub(() => 'local-test-key', transport)
+    await expect(api.start(makeJob(), [], {
+      '1': { class_type: 'ThirdPartyVideoAPI', inputs: {} },
+    })).rejects.toThrow('未核准')
+    expect(transport).toHaveBeenCalledTimes(1)
+    expect(() => assertCoinOnlyWorkflow(directorRef2vaGraph)).not.toThrow()
   })
   it('shows the remote node validation reason for a failed task', async () => {
     const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -667,9 +692,7 @@ describe('safe paid-job lifecycle', () => {
     } as unknown as RunningHub
     new Queue(store, api, () => {}).enqueue(p.id, [p.shots[0].id, p.shots[1].id], false)
     await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
-    expect(store.jobs().find((j) => j.shotId === p.shots[1].id)).toMatchObject({
-      status: 'queued', error: '等待上一镜头完成后自动衔接',
-    })
+    expect(store.jobs().find((j) => j.shotId === p.shots[1].id)).toMatchObject({ status: 'queued' })
   })
   it('marks later videos stale when an earlier shot video changes', async () => {
     const p = store.save(createProject('stale sequence', '16:9', true))

@@ -471,7 +471,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           <h3>
             <KeyRound size={17} /> {t('RunningHub 工作流')}
           </h3>
-          <p className="small muted">{t('已内置指定工作流，使用 RunningHub 中国站。')}</p>
+          <p className="small muted">{t('已内置指定工作流，使用 RunningHub 中国站。只接受消耗 RH币的消费级会员 Key，不使用钱包余额。')}</p>
           <p className="small muted break">{t('工作流：')}{videoWorkflow.id}</p>
           <Field label={t('视频生成模式')}>
             <select
@@ -484,7 +484,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </Field>
           <Field
             label={`API Key ${state.hasKey ? t('· 已安全保存') : ''}`}
-            hint={t('留空保留原 Key。Key 不回传到界面，不进入 ZIP 存档。')}
+            hint={t('请填写消费级会员 Key。留空保留原 Key；Key 不回传到界面，不进入 ZIP 存档。')}
           >
             <input
               type="password"
@@ -506,16 +506,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </div>
           {output && <pre className="api-output">{output}</pre>}
           <Field label={t('同时运行的视频任务')}>
-            <select
-              value={c.concurrency}
-              onChange={(e) => patch({ concurrency: Number(e.target.value) })}
-            >
-              {[1, 2, 3, 4].map((n) => (
-                <option key={n} value={n}>
-                  {n} {t('个')}
-                </option>
-              ))}
-            </select>
+            <p className="small muted">{t('RH币模式一次运行 1 个视频任务，后续镜头依次提交。')}</p>
           </Field>
         </section>
         <section>

@@ -37,7 +37,7 @@ import { Store, createProject, replaceEpisodeScript } from './store'
 import { ChatGPT } from './chatgpt'
 import { CodexText } from './codex'
 import { prepareChatFile } from './chat-files'
-import { Queue, RunningHub, inputsChanged, relevantAssets } from './runninghub'
+import { Queue, RunningHub, assertCoinOnlyWorkflow, inputsChanged, relevantAssets } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter } from './media'
 
 protocol.registerSchemesAsPrivileged([
@@ -606,6 +606,7 @@ if (primary)
               site: videoWorkflow.site,
               workflowId: videoWorkflow.id,
               mappings: [],
+              concurrency: 1,
             })
             if (c.key?.trim()) {
               if (!safeStorage.isEncryptionAvailable())
@@ -623,8 +624,12 @@ if (primary)
             store.set('runninghub-key', '')
             break
           case 'testConnection':
-            text = JSON.stringify(await api.account({ ...store.config(), site: videoWorkflow.site }), null, 2)
-            message = 'RunningHub 连接成功'
+            {
+              const account = await api.coinAccount(videoWorkflow.site)
+              assertCoinOnlyWorkflow(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }))
+              text = `RH币计费已确认；当前余额 ${account.remainCoins} RH币。导演台工作流未使用钱包计费节点。`
+              message = 'RunningHub RH币连接成功'
+            }
             break
           case 'workflow':
             text = JSON.stringify(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }), null, 2)
@@ -632,6 +637,8 @@ if (primary)
           case 'queue':
             if (!key()) throw new Error('请先绑定 RunningHub Key')
             {
+              await api.coinAccount(videoWorkflow.site)
+              assertCoinOnlyWorkflow(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }))
               const adjusted = queue.enqueue(c.projectId, c.shotIds, c.stopOnFailure)
               message = adjusted
                 ? `已加入视频任务队列；${adjusted} 个镜头已自动延长到模型或对白所需时长`

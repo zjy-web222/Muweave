@@ -879,7 +879,7 @@ function App() {
         {batch && p && (
           <Modal
             title={t('生成视频 / 创建镜头分组')}
-            subtitle={t('调用你绑定的 RunningHub 工作流；生成可能产生远端费用。')}
+            subtitle={t('仅允许使用 RH币生成；企业共享 Key 和可能扣钱包的节点会被阻止。')}
             onClose={() => setBatch(null)}
           >
             <div className="modal-body">
@@ -931,7 +931,7 @@ function App() {
               <p className="small muted">
                 {t('工作流：')}
                 {videoWorkflow.id} · {state.config.instanceType === 'plus' ? 'Plus' : 'Standard'}{' '}
-                {t('· 并发')} {state.config.concurrency}{' '}
+                {t('· 并发')} 1{' '}
                 {t('· 当前选择')} {batch.length} {t('镜头')}
               </p>
               <p className="small muted">

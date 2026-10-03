@@ -101,8 +101,8 @@ export const en: Record<string, string> = {
   集名称: 'Episode title',
   创建分集: 'Create episode',
   '生成视频 / 创建镜头分组': 'Generate video / Create shot group',
-  '调用你绑定的 RunningHub 工作流；生成可能产生远端费用。':
-    'Uses your connected RunningHub workflow. Generation may incur charges.',
+  '仅允许使用 RH币生成；企业共享 Key 和可能扣钱包的节点会被阻止。':
+    'Video generation uses RH coins only. Shared enterprise keys and nodes that may charge the wallet are blocked.',
   选择需要运行的镜头: 'Select shots to run',
   '确认生成时会自动延长 {count} 个镜头，给对白留足时间；时长增加可能提高生成费用。':
     'Generating will extend {count} shots to fit their dialogue. Longer videos may cost more.',
@@ -224,8 +224,8 @@ export const en: Record<string, string> = {
   '正在生成图片…': 'Generating image…',
   在软件中直接生成图片: 'Generate image in app',
   '图片已生成并保存到当前项目素材。': 'Image generated and saved to project media.',
-  '已内置指定工作流，使用 RunningHub 中国站。':
-    'The specified workflow is built in and runs on RunningHub China.',
+  '已内置指定工作流，使用 RunningHub 中国站。只接受消耗 RH币的消费级会员 Key，不使用钱包余额。':
+    'The built-in workflow runs on RunningHub China. Only consumer membership keys billed in RH coins are accepted; wallet billing is blocked.',
   视频生成模式: 'Video generation mode',
   'Plus（48 GB 显存）': 'Plus (48 GB VRAM)',
   'Standard（24 GB 显存）': 'Standard (24 GB VRAM)',
@@ -233,8 +233,8 @@ export const en: Record<string, string> = {
   '中国 · runninghub.cn': 'China · runninghub.cn',
   '复制工作流的数字 ID': 'Paste the numeric workflow ID',
   '· 已安全保存': ' · Saved securely',
-  '留空保留原 Key。Key 不回传到界面，不进入 ZIP 存档。':
-    'Leave blank to keep the current key. Keys are never sent back to the UI or included in ZIP archives.',
+  '请填写消费级会员 Key。留空保留原 Key；Key 不回传到界面，不进入 ZIP 存档。':
+    'Enter a consumer membership key. Leave blank to keep the current key. Keys are not sent back to the UI or included in ZIP archives.',
   '已绑定；输入新 Key 可替换': 'Connected; enter a new key to replace it',
   '粘贴你自己的 RunningHub API Key': 'Paste your RunningHub API key',
   测试连接: 'Test connection',
@@ -508,7 +508,9 @@ export const en: Record<string, string> = {
     'Prompt copied. Paste and send it in ChatGPT. Copy text results back to import; downloaded images can be filed directly.',
   '已清除本应用内的 ChatGPT 登录记录': 'This app’s ChatGPT session has been cleared',
   '设置已保存，Key 不会进入项目存档': 'Settings saved. Keys are excluded from project archives.',
-  'RunningHub 连接成功': 'RunningHub connected',
+  'RunningHub RH币连接成功': 'RunningHub RH coin connection verified',
+  'RH币模式一次运行 1 个视频任务，后续镜头依次提交。':
+    'RH coin mode runs one video task at a time. Later shots are submitted in order.',
   已加入视频任务队列: 'Added to the video queue',
   '已暂停新的提交；远端已开始的任务继续运行':
     'New submissions paused. Remote tasks already started will continue.',
