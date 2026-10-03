@@ -18,7 +18,7 @@ import {
   toSrt,
   escapeHtml,
 } from '../src/shared/director'
-import { Queue, RunningHub, RejectedRequest, inputsChanged, prepareVideoWorkflow } from '../src/main/runninghub'
+import { Queue, RunningHub, RejectedRequest, inputsChanged, prepareVideoWorkflow, sameScene, videoPromptWithAssets } from '../src/main/runninghub'
 import {
   blankShot,
   commandSchema,
@@ -114,6 +114,7 @@ describe('local project state', () => {
     expect(prompt).toContain('A'.repeat(30000))
     expect(prompt).not.toContain('TAIL_MARKER')
     expect(prompt).toContain('单次不超过 24 个')
+    expect(prompt).toContain('逐字保留原剧本中的对白')
   })
   it('keeps legacy episodes compatible and validates multi-turn script replies', () => {
     const p = createProject('A', '16:9')
@@ -416,7 +417,7 @@ describe('safe paid-job lifecycle', () => {
     )
     expect(store.jobs()[0]).toMatchObject({ status: 'running', taskId: '123' })
   })
-  it('uses a linked character image as the opening frame and includes its identity in the prompt', async () => {
+  it('keeps a deliberate first frame ahead of the asset portrait and includes identity in the prompt', async () => {
     const p = store.save(createProject('character reference', '16:9', true))
     const asset = p.assets.find((item) => item.kind === 'character' && p.shots[0].assetIds.includes(item.id))!
     const png = join(root, 'portrait.png')
@@ -435,7 +436,46 @@ describe('safe paid-job lifecycle', () => {
     expect(graph['17'].inputs.first_frame).toEqual(['18', 0])
     expect(graph['18'].inputs.image).toBe('character.png')
     expect(store.jobs()[0].referenceMediaId).toBe(store.project(p.id).assets.find((a) => a.id === asset.id)?.selectedMediaId)
-    expect(vi.mocked(api.upload).mock.calls[0][1]).toContain(store.jobs()[0].referenceMediaId)
+    const saved = store.project(p.id)
+    expect(vi.mocked(api.upload).mock.calls[0][1]).toBe(
+      store.file(p.id, saved.media.find((m) => m.id === saved.shots[0].firstMediaId)!.file),
+    )
+  })
+  it('keeps exact screenplay speech and stable asset identities in the video prompt', () => {
+    const p = createProject('dialogue', '16:9', true)
+    const shot = p.shots[1]
+    shot.speaker = '林舟'
+    const prompt = videoPromptWithAssets(p, shot, true, true)
+    expect(prompt).toContain('<d>[Chinese] 如果你还记得，今晚十一点。</d>')
+    expect(prompt).toContain('林舟 (S1)')
+    expect(prompt).toContain('character 林舟:')
+    expect(prompt).toContain('location 街角咖啡馆:')
+    expect(prompt).toContain('prop 未署名的信:')
+    expect(videoPromptWithAssets(p, p.shots[0], false, false)).toContain('no dialogue or voiceover')
+    expect(inputsChanged({ ...shot, dialogue: '新台词' }, shot)).toBe(true)
+  })
+  it('chains shots in one scene and treats a new scene as a cut', () => {
+    const p = createProject('scenes', '16:9', true)
+    expect(sameScene(p.shots[0], p.shots[1], p)).toBe(true)
+    expect(sameScene(p.shots[2], p.shots[3], p)).toBe(false)
+    const q = new Queue(store, {} as RunningHub, () => {})
+    const saved = store.save(p)
+    store.set('config', { ...defaultConfig, paused: true })
+    q.enqueue(saved.id, [saved.shots[3].id], false)
+    expect(store.jobs()[0].previousShotId).toBeUndefined()
+  })
+  it('uses a location opening image for an establishing shot and rejects dialogue too long to speak', async () => {
+    const p = store.save(createProject('anchors', '16:9', true))
+    const location = p.assets.find((a) => a.kind === 'location')!
+    const png = join(root, 'scene.png')
+    await writeFile(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'))
+    await importMedia(store, p.id, location.id, 'reference', png)
+    store.set('config', { ...defaultConfig, paused: true })
+    const q = new Queue(store, {} as RunningHub, () => {})
+    q.enqueue(p.id, [p.shots[0].id], false)
+    expect(store.jobs()[0].referenceMediaId).toBe(store.project(p.id).assets.find((a) => a.id === location.id)?.selectedMediaId)
+    store.update(p.id, (current) => { current.shots[1].dialogue = '这句话太长了。'.repeat(40) })
+    expect(() => q.enqueue(p.id, [p.shots[1].id], false)).toThrow('请延长镜头或拆分对白')
   })
   it('waits for a regenerated previous shot before submitting the next shot', async () => {
     const p = store.save(createProject('regeneration order', '16:9', true))
@@ -488,7 +528,7 @@ describe('safe paid-job lifecycle', () => {
     expect(uploaded[0].subarray(0, 8)).toEqual(Buffer.from('89504e470d0a1a0a', 'hex'))
     const graph = vi.mocked(api.start).mock.calls[0][2]!
     expect(graph['17'].inputs.first_frame).toEqual(['18', 0])
-    expect(graph['17'].inputs.prompt).toContain('紧接上一镜头')
+    expect(graph['17'].inputs.prompt).toContain('Continue the same action immediately')
     expect(store.jobs()[0].previousShotId).toBe(p.shots[0].id)
   }, 15000)
   it('never resubmits an interrupted submission when restarting', async () => {

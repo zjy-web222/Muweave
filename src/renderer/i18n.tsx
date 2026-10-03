@@ -276,6 +276,8 @@ export const en: Record<string, string> = {
   '时长 / 秒': 'Duration / sec',
   画面动作: 'Action',
   '对白 / 字幕': 'Dialogue / Subtitles',
+  说话角色: 'Speaker',
+  '无对白时留空；旁白填写“旁白”': 'Leave empty for silent shots; use “Voiceover” for narration',
   留空表示无对白: 'Leave blank for no dialogue',
   运镜: 'Camera movement',
   光线: 'Lighting',

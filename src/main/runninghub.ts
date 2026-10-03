@@ -59,26 +59,71 @@ export function prepareVideoWorkflow(
   return graph
 }
 export function relevantAssets(p: Project, shot: Shot) {
-  const scene = [shot.title, shot.scene, shot.action, shot.dialogue, shot.videoPrompt].join(' ')
+  const scene = [shot.title, shot.scene, shot.action, shot.dialogue, shot.speaker, shot.videoPrompt].join(' ')
   return p.assets.filter((asset) =>
     shot.assetIds.includes(asset.id) ||
-    (asset.kind === 'character' && asset.name.length >= 2 && scene.includes(asset.name)),
+    (asset.name.length >= 2 && scene.includes(asset.name)),
   )
+}
+export function sameScene(previous: Shot | undefined, shot: Shot, p: Project) {
+  if (!previous) return false
+  const before = previous.scene.trim(), after = shot.scene.trim()
+  if (before && after) return before === after
+  const locations = new Set(p.assets.filter((a) => a.kind === 'location').map((a) => a.id))
+  const sharedLocation = previous.assetIds.some((id) => locations.has(id) && shot.assetIds.includes(id))
+  return sharedLocation || (!before && !after && !previous.assetIds.some((id) => locations.has(id)) &&
+    !shot.assetIds.some((id) => locations.has(id)))
+}
+function spokenLines(shot: Shot) {
+  return shot.dialogue.split(/\r?\n/).map((raw) => {
+    const line = raw.trim()
+    const labeled = /^([^：:]{1,20})[：:]\s*(.+)$/.exec(line)
+    return { speaker: labeled?.[1].trim() || shot.speaker.trim(), words: labeled?.[2].trim() || line }
+  }).filter((line) => line.words)
+}
+function dialogueSeconds(shot: Shot) {
+  return spokenLines(shot).reduce((seconds, line) => {
+    const han = (line.words.match(/[\p{Script=Han}]/gu) || []).length
+    const words = (line.words.match(/[A-Za-z]+/g) || []).length
+    return seconds + han / 3.5 + words / 2.5 + (han || words ? 0.4 : 0)
+  }, 0)
 }
 export function videoPromptWithAssets(p: Project, shot: Shot, continuing: boolean, hasFirstFrame: boolean) {
   const base = shot.videoPrompt.trim() || shot.action.trim()
-  const assets = relevantAssets(p, shot)
+  const assets = relevantAssets(p, shot).slice(0, 12)
   const details = assets.map((asset) =>
-    `${asset.kind} ${asset.name}：${asset.description.slice(0, 400)}${asset.prompt ? `；${asset.prompt.slice(0, 400)}` : ''}`,
+    `${asset.kind} ${asset.name}: ${asset.description.slice(0, 350)}${asset.prompt ? `; ${asset.prompt.slice(0, 250)}` : ''}`,
   )
+  const cast = p.assets.filter((a) => a.kind === 'character')
+  const lines = spokenLines(shot)
+  const voices = [...new Set([
+    ...cast.map((a) => a.name),
+    ...p.shots.flatMap((s) => spokenLines(s).map((line) => line.speaker)).filter(Boolean),
+    '未指定角色',
+  ])]
+  const speech = lines.map(({ speaker, words }) => {
+    const resolved = speaker || (assets.filter((a) => a.kind === 'character').length === 1
+      ? assets.find((a) => a.kind === 'character')?.name : '') || '未指定角色'
+    const number = voices.indexOf(resolved) + 1
+    const tag = /[\p{Script=Han}]/u.test(words) ? 'Chinese' : 'English'
+    const voiceover = /^(旁白|voiceover|narrator)$/i.test(resolved)
+    return `${resolved} (S${number || 1}) ${voiceover ? 'says in an off-screen voiceover' : 'speaks with natural lip sync'} exactly: <d>[${tag}] ${words}</d>${voiceover ? ' The on-screen characters keep their lips closed.' : ''}`
+  })
+  const alignment = continuing
+    ? 'The first frame is the last frame of the previous shot. Continue the same action immediately, preserving faces, clothing, object positions, motion direction, set layout, and lighting.'
+    : hasFirstFrame
+      ? 'The supplied first frame is the opening composition. Preserve its subject identity, outfit, set geometry, and lighting.'
+      : 'Keep established character identities, wardrobe, props, set geometry, and lighting unchanged across this project.'
   return [
-    base,
-    ...(details.length ? [`已确认的角色与场景设定（与前文冲突时以此为准）：\n${details.join('\n')}`] : []),
-    continuing
-      ? '从输入首帧紧接上一镜头继续动作，保持相同人物面容、服装、位置、运动方向、场景和光线；不要重新开场或突然切换人物。'
-      : hasFirstFrame ? '保持已确认的人物外观、服装和场景一致；以输入首帧中的形象为准。' :
-        '保持已确认的人物外观、服装和场景一致。',
-  ].join('\n\n')
+    `integrated_multimodal_description: [Shot 1] ${alignment}`,
+    `Project style: ${p.style || 'cinematic realism'}. Episode: ${p.episodes.find((e) => e.id === shot.episodeId)?.title || ''}. Scene: ${shot.scene || 'unspecified'}. Shot: ${shot.title}.`,
+    `Visual action: ${shot.action}. Camera: ${shot.size}, ${shot.camera}. Lighting: ${shot.lighting}. Additional visual direction: ${base}.`,
+    ...(details.length ? [`Continuity bible; treat these as fixed identities and objects in every shot where they appear:\n${details.join('\n')}`] : []),
+    ...(lines.length ? [`The screenplay dialogue below is the ONLY speech in this shot. Do not paraphrase, translate, invent, or reorder any words. Keep the same speaker voice across shots.\n${speech.join('\n')}`]
+      : ['This shot has no dialogue or voiceover. Do not generate spoken words, mumbling, or background conversation.']),
+    `overall_soundscape: ${lines.length ? 'Natural location ambience and only the exact dialogue above; no extra voices.' : 'Natural location ambience only; no speech.'}`,
+    'non_diegetic_music: None. No subtitles, text overlays, watermarks, or scene changes inside this shot.',
+  ].join('\n')
 }
 export class RunningHub {
   constructor(
@@ -164,7 +209,8 @@ export class RunningHub {
 }
 export function inputsChanged(current: Shot, snapshot: Shot) {
   return current.assetIds.join(',') !== snapshot.assetIds.join(',') ||
-    ['imagePrompt', 'videoPrompt', 'firstMediaId', 'lastMediaId', 'duration', 'seed'].some(
+    ['scene', 'action', 'dialogue', 'speaker', 'size', 'camera', 'lighting', 'imagePrompt',
+      'videoPrompt', 'firstMediaId', 'lastMediaId', 'duration', 'seed'].some(
       (k) => current[k as keyof Shot] !== snapshot[k as keyof Shot],
     )
 }
@@ -224,9 +270,11 @@ export class Queue {
         throw new Error(`${s.title} 已有未完成任务，请先处理原任务`)
       if (!(s.videoPrompt.trim() || s.action.trim()))
         throw new Error(`${s.title} 缺少视频提示词或镜头动作`)
+      if (dialogueSeconds(s) > s.duration - 0.5)
+        throw new Error(`${s.title} 的对白超过 ${s.duration} 秒可容纳的时长，请延长镜头或拆分对白后再生成`)
       const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
       const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
-      if (previous && !previous.videoMediaId && !selection.has(previous.id) &&
+      if (sameScene(previous, s, p) && previous && !previous.videoMediaId && !selection.has(previous.id) &&
           !this.store.jobs().some((job) => job.shotId === previous.id &&
             ['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'].includes(job.status)))
         throw new Error(`${s.title} 需要先生成上一镜头「${previous.title}」，才能使用它的末帧衔接`)
@@ -236,10 +284,13 @@ export class Queue {
     for (const s of selected) {
       const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
       const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
-      const reference = relevantAssets(p, s).find((asset) =>
-        asset.kind === 'character' && asset.selectedMediaId &&
+      const candidates = relevantAssets(p, s).filter((asset) =>
+        (asset.kind === 'character' || asset.kind === 'location') && asset.selectedMediaId &&
         p.media.some((media) => media.id === asset.selectedMediaId && media.kind === 'image'),
       )
+      const visibleCharacter = candidates.find((asset) => asset.kind === 'character' &&
+        [s.action, s.videoPrompt, s.dialogue, s.speaker].some((part) => part.includes(asset.name)))
+      const reference = visibleCharacter || candidates.find((asset) => asset.kind === 'location') || candidates[0]
       this.store.saveJob({
         id: randomUUID(),
         projectId,
@@ -250,7 +301,7 @@ export class Queue {
         site: videoWorkflow.site,
         workflowId: videoWorkflow.id,
         instanceType,
-        previousShotId: previous?.id,
+        previousShotId: sameScene(previous, s, p) ? previous?.id : undefined,
         referenceMediaId: reference?.selectedMediaId,
         aspect: p.aspect,
         mappings: [],
@@ -330,7 +381,7 @@ export class Queue {
         const source = await this.api.workflow(j)
         const frames: { first?: string; last?: string } = {}
         let continuing = false
-        const firstMediaId = j.referenceMediaId || j.snapshot.firstMediaId
+        const firstMediaId = j.snapshot.firstMediaId || j.referenceMediaId
         if (j.previousShotId) {
           const previous = p.shots.find((shot) => shot.id === j.previousShotId)
           const video = p.media.find((media) => media.id === previous?.videoMediaId && media.kind === 'video')

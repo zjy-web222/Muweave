@@ -30,6 +30,7 @@ export const shotSchema = z.object({
   scene: z.string().max(200).default(''),
   action: text,
   dialogue: text,
+  speaker: z.string().max(200).default(''),
   imagePrompt: text,
   videoPrompt: text,
   size: z.string().max(100).default('中景'),

@@ -37,7 +37,7 @@ import { Store, createProject } from './store'
 import { ChatGPT } from './chatgpt'
 import { CodexText } from './codex'
 import { prepareChatFile } from './chat-files'
-import { Queue, RunningHub, inputsChanged } from './runninghub'
+import { Queue, RunningHub, inputsChanged, relevantAssets } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter } from './media'
 
 protocol.registerSchemesAsPrivileged([
@@ -450,8 +450,16 @@ if (primary)
             store.update(c.projectId, (p) => {
               const index = p.assets.findIndex((a) => a.id === c.asset.id)
               if (index < 0) p.assets.push(c.asset)
-              else
+              else {
+                const previous = p.assets[index]
                 p.assets[index] = { ...c.asset, selectedMediaId: p.assets[index].selectedMediaId }
+                if (previous.name !== c.asset.name || previous.description !== c.asset.description ||
+                    previous.prompt !== c.asset.prompt || previous.kind !== c.asset.kind)
+                  for (const shot of p.shots)
+                    if (relevantAssets(p, shot).some((asset) => asset.id === c.asset.id) ||
+                        shot.assetIds.includes(c.asset.id))
+                      shot.stale = !!shot.videoMediaId
+              }
             })
             break
           case 'uploadAssetImage': {

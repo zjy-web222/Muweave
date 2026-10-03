@@ -16,6 +16,7 @@ const shotInput = z.object({
   title: z.string().max(200),
   action: z.string().default(''),
   dialogue: z.string().default(''),
+  speaker: z.string().max(200).default(''),
   scene: z.string().default(''),
   duration: z.number().min(1).max(120).default(5),
   size: z.string().default('中景'),
@@ -33,6 +34,7 @@ const storyboardShotProperties = {
   scene: { type: 'string' },
   action: { type: 'string' },
   dialogue: { type: 'string' },
+  speaker: { type: 'string' },
   duration: { type: 'number' },
   size: { type: 'string' },
   camera: { type: 'string' },
@@ -149,10 +151,10 @@ export function buildPrompt(
     assets:
       '提取并去重角色(character)、场景(location)、道具(prop)，给出可复用视觉描述及英文图片提示词。',
     storyboard:
-      '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。',
+      '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。逐字保留原剧本中的对白，不要改写、翻译、增添台词；每镜尽量只有一个说话角色，在 speaker 字段填该角色名，旁白填“旁白”，无对白时 dialogue 和 speaker 都为空。将较长对白拆成多个镜头，并留出足够说话时间。videoPrompt 只描述画面、动作和运镜，不要在其中另写可能与 dialogue 冲突的新台词。',
   }[kind]
   const shotExample =
-    '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"对白/旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
+    '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"逐字照录的对白","speaker":"说话角色名或旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
   if (kind === 'storyboard')
     return `${context}\n\n你是影视导演。${task}本次先覆盖主要情节，生成 6–12 个镜头；用户另有镜头数量要求时按用户要求，但单次不超过 24 个。需要更多镜头时可以继续追加。\n仅输出有效 JSON（不要解释）：{"shots":[${shotExample}]}\n只返回本集分镜，不改写剧本或资产，不捏造已有素材和生成结果。`
   return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：\n{"episodeTitle":"集标题","script":"完整剧本","assets":[{"kind":"character","name":"角色名","description":"外观与服装","prompt":"英文参考图提示词"}],"shots":[${shotExample}]}\n只返回本任务相关字段；不要捏造已有素材和生成结果。`

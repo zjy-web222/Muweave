@@ -143,6 +143,13 @@ export default function Inspector({
                 placeholder={t('留空表示无对白')}
               />
             </Field>
+            <Field label={t('说话角色')}>
+              <input
+                value={draft.speaker}
+                onChange={(e) => set('speaker', e.target.value)}
+                placeholder={t('无对白时留空；旁白填写“旁白”')}
+              />
+            </Field>
             <div className="field-row">
               <Field label={t('运镜')}>
                 <input value={draft.camera} onChange={(e) => set('camera', e.target.value)} />
