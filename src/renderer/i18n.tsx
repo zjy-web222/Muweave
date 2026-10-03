@@ -440,8 +440,8 @@ export const en: Record<string, string> = {
   '移除资产（保留素材）': 'Remove asset (keep media)',
   保存资产: 'Save asset',
   '从镜头，走向一个完整的故事。': 'Bring your shots together into a story.',
-  '首镜头使用关联人物的选定参考图；后续镜头等待上一镜头完成，并使用其末帧作为首帧。镜头首帧图片不会覆盖这一衔接。':
-    'The first shot uses the linked character reference. Later shots wait for the prior shot and use its last frame as their first frame, even if another opening image is selected.',
+  '同一场景的后续镜头会等待上一镜完成，并用其末帧衔接；换场景时使用镜头首帧或一张关联资产图重新起镜。':
+    'Later shots in the same scene wait for the prior shot and use its last frame. A scene change starts from the shot’s first frame or one linked asset image.',
   '整集连续预览按镜头顺序播放；选择下方镜头可跳转到对应位置。':
     'The episode preview plays shots in order. Select a shot below to jump to its position.',
   '正在拼接整集预览…': 'Assembling the episode preview…',

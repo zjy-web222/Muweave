@@ -69,7 +69,15 @@ export function relevantAssets(p: Project, shot: Shot) {
 export function sameScene(previous: Shot | undefined, shot: Shot, p: Project) {
   if (!previous) return false
   const before = previous.scene.trim(), after = shot.scene.trim()
-  if (before && after) return before === after
+  if (before && after) {
+    if (before === after) return true
+    const [beforePlace, ...beforeContext] = before.split('·').map((part) => part.trim())
+    const [afterPlace, ...afterContext] = after.split('·').map((part) => part.trim())
+    const shorter = beforePlace.length <= afterPlace.length ? beforePlace : afterPlace
+    const longer = beforePlace.length > afterPlace.length ? beforePlace : afterPlace
+    return beforeContext.join('·') === afterContext.join('·') && shorter.length >= 4 &&
+      longer.startsWith(shorter) && longer.length - shorter.length <= 8
+  }
   const locations = new Set(p.assets.filter((a) => a.kind === 'location').map((a) => a.id))
   const sharedLocation = previous.assetIds.some((id) => locations.has(id) && shot.assetIds.includes(id))
   return sharedLocation || (!before && !after && !previous.assetIds.some((id) => locations.has(id)) &&
@@ -102,6 +110,9 @@ export function videoPromptWithAssets(p: Project, shot: Shot, continuing: boolea
       ? 'The supplied first frame is the opening composition. Preserve its subject identity, outfit, set geometry, and lighting.'
       : 'Keep established character identities, wardrobe, props, set geometry, and lighting unchanged across this project.'
   return [
+    ...(hasFirstFrame ? [
+      `For the target video, at 0.00 seconds, <Picture 1> is the exact first frame of [Shot 1]${continuing ? ' and the final frame of the previous shot' : ''}. Preserve the people, clothing, objects, layout, and lighting visible in that frame.`,
+    ] : []),
     `integrated_multimodal_description: [Shot 1] ${alignment}`,
     `Project style: ${p.style || 'cinematic realism'}. Episode: ${p.episodes.find((e) => e.id === shot.episodeId)?.title || ''}. Scene: ${shot.scene || 'unspecified'}. Shot: ${shot.title}.`,
     `Visual action: ${shot.action}. Camera: ${shot.size}, ${shot.camera}. Lighting: ${shot.lighting}. Additional visual direction: ${base}.`,

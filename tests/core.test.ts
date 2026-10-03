@@ -518,6 +518,7 @@ describe('safe paid-job lifecycle', () => {
     expect(prompt).toContain('character 林舟:')
     expect(prompt).toContain('location 街角咖啡馆:')
     expect(prompt).toContain('prop 未署名的信:')
+    expect(prompt.startsWith('For the target video, at 0.00 seconds, <Picture 1>')).toBe(true)
     expect(videoPromptWithAssets(p, p.shots[0], false, false)).toContain('no dialogue or voiceover')
     expect(inputsChanged({ ...shot, dialogue: '新台词' }, shot)).toBe(true)
   })
@@ -525,6 +526,9 @@ describe('safe paid-job lifecycle', () => {
     const p = createProject('scenes', '16:9', true)
     expect(sameScene(p.shots[0], p.shots[1], p)).toBe(true)
     expect(sameScene(p.shots[2], p.shots[3], p)).toBe(false)
+    const riverside = { ...p.shots[0], scene: '河边步道·外·日' }
+    expect(sameScene(riverside, { ...p.shots[1], scene: '河边步道垃圾桶旁·外·日' }, p)).toBe(true)
+    expect(sameScene(riverside, { ...p.shots[1], scene: '河边步道垃圾桶旁·外·夜' }, p)).toBe(false)
     const q = new Queue(store, {} as RunningHub, () => {})
     const saved = store.save(p)
     store.set('config', { ...defaultConfig, paused: true })
