@@ -12,6 +12,23 @@ function jsonObject(raw: string) {
   return JSON.parse(trimmed.slice(start, end + 1))
 }
 
+export function spokenLines(dialogue: string, fallbackSpeaker = '') {
+  return dialogue.split(/\r?\n/).map((raw) => {
+    const line = raw.trim()
+    const labeled = /^([^：:]{1,20})[：:]\s*(.+)$/.exec(line)
+    return { speaker: labeled?.[1].trim() || fallbackSpeaker.trim(), words: labeled?.[2].trim() || line }
+  }).filter((line) => line.words)
+}
+
+export function minimumDialogueDuration(dialogue: string) {
+  const seconds = spokenLines(dialogue).reduce((total, line) => {
+    const han = (line.words.match(/[\p{Script=Han}]/gu) || []).length
+    const words = (line.words.match(/[A-Za-z]+/g) || []).length
+    return total + han / 3.5 + words / 2.5 + (han || words ? 0.4 : 0)
+  }, 0)
+  return seconds ? Math.ceil(seconds + 0.5) : 0
+}
+
 const shotInput = z.object({
   title: z.string().max(200),
   action: z.string().default(''),
@@ -25,6 +42,9 @@ const shotInput = z.object({
   imagePrompt: z.string().default(''),
   videoPrompt: z.string().default(''),
   characters: z.array(z.string()).default([]),
+}).transform((shot) => {
+  const required = minimumDialogueDuration(shot.dialogue)
+  return { ...shot, duration: required <= 10 ? Math.max(shot.duration, required) : shot.duration }
 })
 // The response constraint mirrors the shot fields accepted by shotInput. Keep
 // required fields explicit for Codex's strict JSON output, then validate with
@@ -151,7 +171,7 @@ export function buildPrompt(
     assets:
       '提取并去重角色(character)、场景(location)、道具(prop)，给出可复用视觉描述及英文图片提示词。',
     storyboard:
-      '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。逐字保留原剧本中的对白，不要改写、翻译、增添台词；每镜尽量只有一个说话角色，在 speaker 字段填该角色名，旁白填“旁白”，无对白时 dialogue 和 speaker 都为空。将较长对白拆成多个镜头，并留出足够说话时间。videoPrompt 只描述画面、动作和运镜，不要在其中另写可能与 dialogue 冲突的新台词。',
+      '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。逐字保留原剧本中的对白，不要改写、翻译、增添台词；每镜尽量只有一个说话角色，在 speaker 字段填该角色名，旁白填“旁白”，无对白时 dialogue 和 speaker 都为空。按每秒约 3.5 个汉字或 2.5 个英文词估算对白时长，额外留出开口与停顿时间；一段对白超过 10 秒就按语意拆成多个连续镜头，不要压缩台词。videoPrompt 只描述画面、动作和运镜，不要在其中另写可能与 dialogue 冲突的新台词。',
   }[kind]
   const shotExample =
     '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"逐字照录的对白","speaker":"说话角色名或旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'

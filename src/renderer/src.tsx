@@ -41,6 +41,7 @@ import {
   type Snapshot,
   videoWorkflow,
 } from '../shared/schema'
+import { minimumDialogueDuration } from '../shared/director'
 import { Button, Empty, Modal, Field, Preview, Workspace, Working } from './ui'
 import Canvas from './Canvas'
 import Inspector from './Inspector'
@@ -166,6 +167,12 @@ function App() {
       state?.jobs.filter((j) =>
         ['queued', 'running', 'submitting', 'downloading'].includes(j.status),
       ) || []
+  const batchTiming = shots.filter((item) => batch?.includes(item.id)).map((item) => ({
+    shot: item,
+    required: minimumDialogueDuration(item.dialogue),
+  }))
+  const autoFit = batchTiming.filter(({ shot, required }) => required > shot.duration && required <= 10)
+  const needsSplit = batchTiming.filter(({ shot, required }) => required > shot.duration && required > 10)
   const selectedArchive = p?.scriptArchives.find((item) => item.id === scriptArchiveId) ||
     p?.scriptArchives.at(-1)
   const archivedShot = selectedArchive?.shots.find((item) => item.id === archiveShotId) ||
@@ -878,8 +885,9 @@ function App() {
             <div className="modal-body">
               <p>{t('选择需要运行的镜头')}</p>
               <div className="batch-shots">
-                {shots.map((s) => (
-                  <label key={s.id}>
+                {shots.map((s) => {
+                  const required = minimumDialogueDuration(s.dialogue)
+                  return <label key={s.id} className={required > s.duration ? 'needs-timing' : ''}>
                     <input
                       type="checkbox"
                       checked={batch.includes(s.id)}
@@ -890,10 +898,25 @@ function App() {
                       }
                     />
                     <span>{s.title}</span>
-                    <small>{s.duration}s</small>
+                    <small className={required > 10 && required > s.duration ? 'danger' : ''}>
+                      {s.duration}s{required > s.duration ? ` → ${required}s` : ''}
+                    </small>
                   </label>
-                ))}
+                })}
               </div>
+              {!!autoFit.length && <p className="small batch-timing-note" role="status">
+                {t('确认生成时会自动延长 {count} 个镜头，给对白留足时间；时长增加可能提高生成费用。')
+                  .replace('{count}', String(autoFit.length))}
+              </p>}
+              {!!needsSplit.length && <div className="batch-timing-alert" role="alert">
+                <p className="small danger">
+                  {needsSplit[0].shot.title}{t('的对白约需 {duration} 秒；请先拆分对白或手动延长镜头。')
+                    .replace('{duration}', String(needsSplit[0].required))}
+                </p>
+                <Button onClick={() => { setSelected(needsSplit[0].shot.id); setInspector(true); setBatch(null) }}>
+                  {t('编辑这个镜头')}
+                </Button>
+              </div>}
               <label className="check-label">
                 <input type="checkbox" checked={stop} onChange={(e) => setStop(e.target.checked)} />
                 {t('一个镜头失败时暂停同组尚未提交的镜头')}
@@ -939,8 +962,9 @@ function App() {
               </Button>
               <Button
                 primary
-                disabled={!batch.length || !state.hasKey}
+                disabled={!batch.length || !state.hasKey || !!needsSplit.length}
                 onClick={async () => {
+                  setError('')
                   const r = await run({
                     type: 'queue',
                     projectId: p.id,

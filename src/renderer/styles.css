@@ -2051,6 +2051,27 @@ small,
 }
 .batch-shots small {
   margin-left: auto;
+  white-space: nowrap;
+}
+.batch-shots .needs-timing small {
+  color: var(--accent);
+}
+.batch-shots .needs-timing small.danger {
+  color: var(--danger);
+}
+.batch-timing-note {
+  margin: -8px 0 16px;
+  color: var(--accent);
+}
+.batch-timing-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -8px 0 16px;
+}
+.batch-timing-alert p {
+  margin: 0;
 }
 .group-row {
   display: flex;

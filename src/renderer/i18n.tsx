@@ -104,6 +104,11 @@ export const en: Record<string, string> = {
   '调用你绑定的 RunningHub 工作流；生成可能产生远端费用。':
     'Uses your connected RunningHub workflow. Generation may incur charges.',
   选择需要运行的镜头: 'Select shots to run',
+  '确认生成时会自动延长 {count} 个镜头，给对白留足时间；时长增加可能提高生成费用。':
+    'Generating will extend {count} shots to fit their dialogue. Longer videos may cost more.',
+  '的对白约需 {duration} 秒；请先拆分对白或手动延长镜头。':
+    ' needs about {duration} seconds for dialogue. Split the dialogue or extend the shot first.',
+  编辑这个镜头: 'Edit this shot',
   一个镜头失败时暂停同组尚未提交的镜头: 'Pause remaining shots in the group if one fails',
   '保存为分组（可选）': 'Save as group (optional)',
   '例如：第一场 · 咖啡馆': 'Example: Scene 1 · Café',

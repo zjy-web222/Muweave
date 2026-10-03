@@ -631,8 +631,12 @@ if (primary)
             break
           case 'queue':
             if (!key()) throw new Error('请先绑定 RunningHub Key')
-            queue.enqueue(c.projectId, c.shotIds, c.stopOnFailure)
-            message = '已加入视频任务队列'
+            {
+              const adjusted = queue.enqueue(c.projectId, c.shotIds, c.stopOnFailure)
+              message = adjusted
+                ? `已加入视频任务队列；${adjusted} 个镜头已自动延长到对白所需时长`
+                : '已加入视频任务队列'
+            }
             break
           case 'job':
             await queue.action(c.jobId, c.action, c.taskId)

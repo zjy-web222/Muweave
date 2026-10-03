@@ -48,6 +48,15 @@ try {
   const project = snapshot.state.projects[0],
     shot = project.shots[0]
   assert.equal(shot.title, '桌面测试 · 已保存的镜头')
+  await page.getByLabel('时长 / 秒').fill('3')
+  await page.getByLabel('对白 / 字幕').fill('今天我们一起去看看那封信吧')
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await page.getByRole('button', { name: '批量', exact: true }).click()
+  const batchDialog = page.getByRole('dialog', { name: '生成视频 / 创建镜头分组' })
+  await batchDialog.getByText('确认生成时会自动延长 1 个镜头').waitFor()
+  assert.match(await batchDialog.locator('.batch-shots label').first().innerText(), /3s → \d+s/)
+  await batchDialog.screenshot({ path: join(evidence, '02-dialogue-timing-preview.png') })
+  await batchDialog.getByRole('button', { name: '关闭对话框' }).click()
   const archivedVideo = join(data, 'archived-shot.mp4')
   execFileSync('ffmpeg', [
     '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=320x180:r=24',

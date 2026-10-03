@@ -13,6 +13,7 @@ import {
   buildScriptChatPrompt,
   buildPrompt,
   parseDirector,
+  minimumDialogueDuration,
   storyboardImport,
   parseScriptChatReply,
   toSrt,
@@ -155,6 +156,12 @@ describe('local project state', () => {
     const p = createProject('A', '16:9', true)
     const data = parseDirector('```json\n{"shots":[{"title":"镜头一","duration":6}]}\n```')
     expect(data.shots?.[0].duration).toBe(6)
+    const shortSpeech = '今天我们一起去看看那封信吧'
+    const fitted = parseDirector(JSON.stringify({ shots: [{ title: '短对白', duration: 3, dialogue: shortSpeech }] }))
+    expect(fitted.shots?.[0].duration).toBe(minimumDialogueDuration(shortSpeech))
+    const longSpeech = '这段对白真的很长，镜头必须拆分。'.repeat(8)
+    const needsSplit = parseDirector(JSON.stringify({ shots: [{ title: '长对白', duration: 3, dialogue: longSpeech }] }))
+    expect(needsSplit.shots?.[0].duration).toBe(3)
     expect(() => parseDirector('{"shots":[{"title":"x","duration":999}]}')).toThrow()
     const storyboard = JSON.parse(
       storyboardImport(
@@ -524,7 +531,7 @@ describe('safe paid-job lifecycle', () => {
     q.enqueue(saved.id, [saved.shots[3].id], false)
     expect(store.jobs()[0].previousShotId).toBeUndefined()
   })
-  it('uses a location opening image for an establishing shot and rejects dialogue too long to speak', async () => {
+  it('fits brief dialogue before queueing and rejects dialogue that needs multiple shots', async () => {
     const p = store.save(createProject('anchors', '16:9', true))
     const location = p.assets.find((a) => a.kind === 'location')!
     const png = join(root, 'scene.png')
@@ -534,8 +541,38 @@ describe('safe paid-job lifecycle', () => {
     const q = new Queue(store, {} as RunningHub, () => {})
     q.enqueue(p.id, [p.shots[0].id], false)
     expect(store.jobs()[0].referenceMediaId).toBe(store.project(p.id).assets.find((a) => a.id === location.id)?.selectedMediaId)
+    const shortSpeech = '今天我们一起去看看那封信吧'
+    store.update(p.id, (current) => {
+      current.shots[0].dialogue = shortSpeech
+      current.shots[0].duration = 3
+    })
+    const firstJob = store.jobs()[0]
+    firstJob.status = 'cancelled'
+    store.saveJob(firstJob)
+    expect(q.enqueue(p.id, [p.shots[0].id], false)).toBe(1)
+    expect(store.project(p.id).shots[0].duration).toBe(minimumDialogueDuration(shortSpeech))
+    expect(store.jobs()[0].snapshot.duration).toBe(minimumDialogueDuration(shortSpeech))
     store.update(p.id, (current) => { current.shots[1].dialogue = '这句话太长了。'.repeat(40) })
-    expect(() => q.enqueue(p.id, [p.shots[1].id], false)).toThrow('请延长镜头或拆分对白')
+    expect(() => q.enqueue(p.id, [p.shots[1].id], false)).toThrow('请在导演台拆成多个镜头')
+    expect(store.jobs()).toHaveLength(2)
+  })
+  it('validates the whole batch before changing durations or creating paid jobs', () => {
+    const p = createProject('timing batch', '16:9', true)
+    p.shots[0].duration = 3
+    p.shots[0].dialogue = '今天我们一起去看看那封信吧'
+    p.shots[1].duration = 3
+    p.shots[1].dialogue = '这段对白需要拆成多个镜头。'.repeat(12)
+    store.save(p)
+    store.set('config', { ...defaultConfig, paused: true })
+    const queue = new Queue(store, {} as RunningHub, () => {})
+    expect(() => queue.enqueue(p.id, p.shots.slice(0, 2).map((shot) => shot.id), false))
+      .toThrow('请在导演台拆成多个镜头')
+    expect(store.project(p.id).shots[0].duration).toBe(3)
+    expect(store.jobs()).toHaveLength(0)
+    store.update(p.id, (current) => { current.shots[1].dialogue = '我们去看看那封信吧' })
+    expect(queue.enqueue(p.id, p.shots.slice(0, 2).map((shot) => shot.id), false)).toBe(2)
+    expect(store.jobs()).toHaveLength(2)
+    expect(store.jobs().map((job) => job.snapshot.duration).sort()).toEqual([4, 5])
   })
   it('waits for a regenerated previous shot before submitting the next shot', async () => {
     const p = store.save(createProject('regeneration order', '16:9', true))

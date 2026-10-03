@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { z } from 'zod'
 import { type Job, type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
+import { minimumDialogueDuration, spokenLines } from '../shared/director'
 import { Store } from './store'
 import { downloadVideo, extractLastFrame, importMedia } from './media'
 
@@ -74,20 +75,6 @@ export function sameScene(previous: Shot | undefined, shot: Shot, p: Project) {
   return sharedLocation || (!before && !after && !previous.assetIds.some((id) => locations.has(id)) &&
     !shot.assetIds.some((id) => locations.has(id)))
 }
-function spokenLines(shot: Shot) {
-  return shot.dialogue.split(/\r?\n/).map((raw) => {
-    const line = raw.trim()
-    const labeled = /^([^：:]{1,20})[：:]\s*(.+)$/.exec(line)
-    return { speaker: labeled?.[1].trim() || shot.speaker.trim(), words: labeled?.[2].trim() || line }
-  }).filter((line) => line.words)
-}
-function dialogueSeconds(shot: Shot) {
-  return spokenLines(shot).reduce((seconds, line) => {
-    const han = (line.words.match(/[\p{Script=Han}]/gu) || []).length
-    const words = (line.words.match(/[A-Za-z]+/g) || []).length
-    return seconds + han / 3.5 + words / 2.5 + (han || words ? 0.4 : 0)
-  }, 0)
-}
 export function videoPromptWithAssets(p: Project, shot: Shot, continuing: boolean, hasFirstFrame: boolean) {
   const base = shot.videoPrompt.trim() || shot.action.trim()
   const assets = relevantAssets(p, shot).slice(0, 12)
@@ -95,10 +82,10 @@ export function videoPromptWithAssets(p: Project, shot: Shot, continuing: boolea
     `${asset.kind} ${asset.name}: ${asset.description.slice(0, 350)}${asset.prompt ? `; ${asset.prompt.slice(0, 250)}` : ''}`,
   )
   const cast = p.assets.filter((a) => a.kind === 'character')
-  const lines = spokenLines(shot)
+  const lines = spokenLines(shot.dialogue, shot.speaker)
   const voices = [...new Set([
     ...cast.map((a) => a.name),
-    ...p.shots.flatMap((s) => spokenLines(s).map((line) => line.speaker)).filter(Boolean),
+    ...p.shots.flatMap((s) => spokenLines(s.dialogue, s.speaker).map((line) => line.speaker)).filter(Boolean),
     '未指定角色',
   ])]
   const speech = lines.map(({ speaker, words }) => {
@@ -254,6 +241,7 @@ export class Queue {
       return s
     })
     const selection = new Set(selected.map((shot) => shot.id))
+    const fitted = new Map<string, number>()
     for (const s of selected) {
       if (
         this.store
@@ -270,14 +258,27 @@ export class Queue {
         throw new Error(`${s.title} 已有未完成任务，请先处理原任务`)
       if (!(s.videoPrompt.trim() || s.action.trim()))
         throw new Error(`${s.title} 缺少视频提示词或镜头动作`)
-      if (dialogueSeconds(s) > s.duration - 0.5)
-        throw new Error(`${s.title} 的对白超过 ${s.duration} 秒可容纳的时长，请延长镜头或拆分对白后再生成`)
+      const required = minimumDialogueDuration(s.dialogue)
+      if (required > s.duration) {
+        if (required > 10)
+          throw new Error(`${s.title} 的对白约需 ${required} 秒，请在导演台拆成多个镜头后再生成`)
+        fitted.set(s.id, required)
+      }
       const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
       const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
       if (sameScene(previous, s, p) && previous && !previous.videoMediaId && !selection.has(previous.id) &&
           !this.store.jobs().some((job) => job.shotId === previous.id &&
             ['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'].includes(job.status)))
         throw new Error(`${s.title} 需要先生成上一镜头「${previous.title}」，才能使用它的末帧衔接`)
+    }
+    if (fitted.size) {
+      for (const s of selected) {
+        const duration = fitted.get(s.id)
+        if (duration === undefined) continue
+        s.duration = duration
+        if (s.videoMediaId) s.stale = true
+      }
+      this.store.save(p)
     }
     const batchId = randomUUID(),
       now = new Date().toISOString()
@@ -314,6 +315,7 @@ export class Queue {
     }
     this.changed()
     void this.tick()
+    return fitted.size
   }
   private async tick() {
     if (this.stopped) return
