@@ -1,0 +1,1333 @@
+{
+  "last_link_id": 23,
+  "nodes": [
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "h3_text_encoder",
+          "slot_index": 0,
+          "links": [
+            11
+          ],
+          "label": "h3_text_encoder",
+          "type": "MINIMAX_H3_TEXT_ENCODER",
+          "localized_name": "h3_text_encoder"
+        }
+      ],
+      "size": [
+        380,
+        178
+      ],
+      "pos": [
+        40,
+        40
+      ],
+      "widgets_values": [
+        "MiniMax-H3",
+        "auto",
+        "qwen3-vl-32b-int8_convrot.safetensors"
+      ],
+      "inputs": [
+        {
+          "widget": {
+            "name": "model_root"
+          },
+          "name": "model_root",
+          "label": "model_root",
+          "type": "COMBO",
+          "localized_name": "model_root"
+        },
+        {
+          "widget": {
+            "name": "dtype"
+          },
+          "name": "dtype",
+          "label": "dtype",
+          "type": "COMBO",
+          "localized_name": "dtype"
+        },
+        {
+          "widget": {
+            "name": "text_encoder_path"
+          },
+          "name": "text_encoder_path",
+          "label": "text_encoder_path",
+          "type": "COMBO",
+          "localized_name": "text_encoder_path"
+        }
+      ],
+      "flags": {},
+      "id": 1,
+      "type": "RHMiniMaxH3Ref2VATextEncoderLoader",
+      "title": "Ref2VA Qwen3-VL Loader",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VATextEncoderLoader"
+      },
+      "order": 0
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "h3_model",
+          "slot_index": 0,
+          "links": [
+            15
+          ],
+          "label": "h3_model",
+          "type": "MINIMAX_H3_DIRECT_MODEL",
+          "localized_name": "h3_model"
+        }
+      ],
+      "size": [
+        380,
+        178
+      ],
+      "pos": [
+        40,
+        240
+      ],
+      "widgets_values": [
+        "MiniMax-H3",
+        "auto",
+        "MiniMax-H3-Ref2VA-int8_convrot.safetensors"
+      ],
+      "inputs": [
+        {
+          "widget": {
+            "name": "model_root"
+          },
+          "name": "model_root",
+          "label": "model_root",
+          "type": "COMBO",
+          "localized_name": "model_root"
+        },
+        {
+          "widget": {
+            "name": "dtype"
+          },
+          "name": "dtype",
+          "label": "dtype",
+          "type": "COMBO",
+          "localized_name": "dtype"
+        },
+        {
+          "widget": {
+            "name": "transformer_path"
+          },
+          "name": "transformer_path",
+          "label": "transformer_path",
+          "type": "COMBO",
+          "localized_name": "transformer_path"
+        }
+      ],
+      "flags": {},
+      "id": 2,
+      "type": "RHMiniMaxH3Ref2VAModelLoader",
+      "title": "Ref2VA DiT Loader",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VAModelLoader"
+      },
+      "order": 1
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "h3_vae_bundle",
+          "slot_index": 0,
+          "links": [
+            12,
+            18
+          ],
+          "label": "h3_vae_bundle",
+          "type": "MINIMAX_H3_VAE_BUNDLE",
+          "localized_name": "h3_vae_bundle"
+        }
+      ],
+      "size": [
+        380,
+        178
+      ],
+      "pos": [
+        40,
+        440
+      ],
+      "widgets_values": [
+        "MiniMax-H3",
+        "MiniMax-H3-video_vae.safetensors",
+        "MiniMax-H3-audio_vae.safetensors"
+      ],
+      "inputs": [
+        {
+          "widget": {
+            "name": "model_root"
+          },
+          "name": "model_root",
+          "label": "model_root",
+          "type": "COMBO",
+          "localized_name": "model_root"
+        },
+        {
+          "widget": {
+            "name": "video_vae_path"
+          },
+          "name": "video_vae_path",
+          "label": "video_vae_path",
+          "type": "COMBO",
+          "localized_name": "video_vae_path"
+        },
+        {
+          "widget": {
+            "name": "audio_vae_path"
+          },
+          "name": "audio_vae_path",
+          "label": "audio_vae_path",
+          "type": "COMBO",
+          "localized_name": "audio_vae_path"
+        }
+      ],
+      "flags": {},
+      "id": 3,
+      "type": "RHMiniMaxH3Ref2VAVAELoader",
+      "title": "Ref2VA Dual VAE Loader",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VAVAELoader"
+      },
+      "order": 2
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "references",
+          "slot_index": 0,
+          "links": [
+            3
+          ],
+          "label": "references",
+          "type": "MINIMAX_H3_REFERENCES",
+          "localized_name": "references"
+        }
+      ],
+      "size": [
+        380,
+        100
+      ],
+      "pos": [
+        820,
+        40
+      ],
+      "widgets_values": [],
+      "inputs": [
+        {
+          "name": "image",
+          "link": 1,
+          "label": "image",
+          "type": "IMAGE",
+          "localized_name": "image"
+        },
+        {
+          "shape": 7,
+          "name": "references",
+          "label": "references",
+          "type": "MINIMAX_H3_REFERENCES",
+          "localized_name": "references"
+        }
+      ],
+      "flags": {},
+      "id": 5,
+      "type": "RHMiniMaxH3Ref2VAImageReference",
+      "title": "Image Ref 1",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VAImageReference"
+      },
+      "order": 3
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "references",
+          "slot_index": 0,
+          "links": [
+            22,
+            23
+          ],
+          "label": "references",
+          "type": "MINIMAX_H3_REFERENCES",
+          "localized_name": "references"
+        }
+      ],
+      "size": [
+        380,
+        100
+      ],
+      "pos": [
+        820,
+        180
+      ],
+      "widgets_values": [],
+      "inputs": [
+        {
+          "name": "image",
+          "link": 2,
+          "label": "image",
+          "type": "IMAGE",
+          "localized_name": "image"
+        },
+        {
+          "shape": 7,
+          "name": "references",
+          "link": 3,
+          "label": "references",
+          "type": "MINIMAX_H3_REFERENCES",
+          "localized_name": "references"
+        }
+      ],
+      "flags": {},
+      "id": 7,
+      "type": "RHMiniMaxH3Ref2VAImageReference",
+      "title": "Image Ref 2",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VAImageReference"
+      },
+      "order": 4
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "av_latent",
+          "slot_index": 0,
+          "links": [
+            8
+          ],
+          "label": "av_latent",
+          "type": "MINIMAX_H3_AV_LATENT",
+          "localized_name": "av_latent"
+        }
+      ],
+      "size": [
+        380,
+        100
+      ],
+      "pos": [
+        1700,
+        40
+      ],
+      "widgets_values": [],
+      "inputs": [
+        {
+          "name": "target",
+          "link": 14,
+          "label": "target",
+          "type": "MINIMAX_H3_TARGET",
+          "localized_name": "target"
+        }
+      ],
+      "flags": {},
+      "id": 14,
+      "type": "RHMiniMaxH3EmptyAVLatent",
+      "title": "Empty AV Latent",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3EmptyAVLatent"
+      },
+      "order": 5
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "sampled_av_latent",
+          "slot_index": 0,
+          "links": [
+            17
+          ],
+          "label": "sampled_av_latent",
+          "type": "MINIMAX_H3_AV_LATENT",
+          "localized_name": "sampled_av_latent"
+        }
+      ],
+      "size": [
+        380,
+        406
+      ],
+      "pos": [
+        1700,
+        180
+      ],
+      "widgets_values": [
+        42,
+        "fixed",
+        21,
+        12,
+        3,
+        "off",
+        true,
+        0.12,
+        2,
+        4,
+        4,
+        "res_multistep",
+        false
+      ],
+      "inputs": [
+        {
+          "name": "h3_model",
+          "link": 15,
+          "label": "h3_model",
+          "type": "MINIMAX_H3_DIRECT_MODEL",
+          "localized_name": "h3_model"
+        },
+        {
+          "name": "conditioning",
+          "link": 16,
+          "label": "conditioning",
+          "type": "MINIMAX_H3_CONDITIONING",
+          "localized_name": "conditioning"
+        },
+        {
+          "name": "av_latent",
+          "link": 8,
+          "label": "av_latent",
+          "type": "MINIMAX_H3_AV_LATENT",
+          "localized_name": "av_latent"
+        },
+        {
+          "shape": 7,
+          "name": "sampler_config",
+          "label": "sampler_config",
+          "type": "MINIMAX_H3_SAMPLER_CONFIG",
+          "localized_name": "sampler_config"
+        },
+        {
+          "widget": {
+            "name": "seed"
+          },
+          "name": "seed",
+          "label": "seed",
+          "type": "INT",
+          "localized_name": "seed"
+        },
+        {
+          "widget": {
+            "name": "sigma_points"
+          },
+          "name": "sigma_points",
+          "label": "sigma_points",
+          "type": "INT",
+          "localized_name": "sigma_points"
+        },
+        {
+          "widget": {
+            "name": "video_shift"
+          },
+          "name": "video_shift",
+          "label": "video_shift",
+          "type": "FLOAT",
+          "localized_name": "video_shift"
+        },
+        {
+          "widget": {
+            "name": "audio_shift"
+          },
+          "name": "audio_shift",
+          "label": "audio_shift",
+          "type": "FLOAT",
+          "localized_name": "audio_shift"
+        },
+        {
+          "widget": {
+            "name": "accel"
+          },
+          "name": "accel",
+          "label": "accel",
+          "type": "COMBO",
+          "localized_name": "accel"
+        },
+        {
+          "widget": {
+            "name": "denoise_video"
+          },
+          "name": "denoise_video",
+          "label": "denoise_video",
+          "type": "BOOLEAN",
+          "localized_name": "denoise_video"
+        },
+        {
+          "widget": {
+            "name": "cache_dit_rdt"
+          },
+          "shape": 7,
+          "name": "cache_dit_rdt",
+          "label": "cache_dit_rdt",
+          "type": "FLOAT",
+          "localized_name": "cache_dit_rdt"
+        },
+        {
+          "widget": {
+            "name": "cache_dit_mc"
+          },
+          "shape": 7,
+          "name": "cache_dit_mc",
+          "label": "cache_dit_mc",
+          "type": "INT",
+          "localized_name": "cache_dit_mc"
+        },
+        {
+          "widget": {
+            "name": "cache_dit_warmup"
+          },
+          "shape": 7,
+          "name": "cache_dit_warmup",
+          "label": "cache_dit_warmup",
+          "type": "INT",
+          "localized_name": "cache_dit_warmup"
+        },
+        {
+          "widget": {
+            "name": "velocity_stride"
+          },
+          "shape": 7,
+          "name": "velocity_stride",
+          "label": "velocity_stride",
+          "type": "INT",
+          "localized_name": "velocity_stride"
+        },
+        {
+          "widget": {
+            "name": "sampler_mode"
+          },
+          "shape": 7,
+          "name": "sampler_mode",
+          "label": "sampler_mode",
+          "type": "COMBO",
+          "localized_name": "sampler_mode"
+        },
+        {
+          "widget": {
+            "name": "allow_accel_with_res_multistep"
+          },
+          "shape": 7,
+          "name": "allow_accel_with_res_multistep",
+          "label": "allow_accel_with_res_multistep",
+          "type": "BOOLEAN",
+          "localized_name": "allow_accel_with_res_multistep"
+        }
+      ],
+      "flags": {},
+      "id": 15,
+      "type": "RHMiniMaxH3DualSigmaSampler",
+      "title": "Dual Sigma Sampler",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3DualSigmaSampler"
+      },
+      "order": 6
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "frames",
+          "slot_index": 0,
+          "links": [
+            19
+          ],
+          "label": "frames",
+          "type": "IMAGE",
+          "localized_name": "frames"
+        },
+        {
+          "name": "audio",
+          "slot_index": 1,
+          "links": [
+            20
+          ],
+          "label": "audio",
+          "type": "AUDIO",
+          "localized_name": "audio"
+        }
+      ],
+      "size": [
+        380,
+        100
+      ],
+      "pos": [
+        2120,
+        40
+      ],
+      "widgets_values": [],
+      "inputs": [
+        {
+          "name": "h3_vae_bundle",
+          "link": 18,
+          "label": "h3_vae_bundle",
+          "type": "MINIMAX_H3_VAE_BUNDLE",
+          "localized_name": "h3_vae_bundle"
+        },
+        {
+          "name": "sampled_av_latent",
+          "link": 17,
+          "label": "sampled_av_latent",
+          "type": "MINIMAX_H3_AV_LATENT",
+          "localized_name": "sampled_av_latent"
+        }
+      ],
+      "flags": {},
+      "id": 16,
+      "type": "RHMiniMaxH3DecodeAV",
+      "title": "Decode Video + Audio",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3DecodeAV"
+      },
+      "order": 7
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "slot_index": 0,
+          "links": [
+            21
+          ],
+          "label": "VIDEO",
+          "type": "VIDEO",
+          "localized_name": "视频"
+        }
+      ],
+      "size": [
+        300,
+        102
+      ],
+      "pos": [
+        2120,
+        200
+      ],
+      "widgets_values": [
+        24,
+        8
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "link": 19,
+          "label": "images",
+          "type": "IMAGE",
+          "localized_name": "图像"
+        },
+        {
+          "shape": 7,
+          "name": "audio",
+          "link": 20,
+          "label": "audio",
+          "type": "AUDIO",
+          "localized_name": "音频"
+        },
+        {
+          "widget": {
+            "name": "fps"
+          },
+          "name": "fps",
+          "label": "fps",
+          "type": "FLOAT",
+          "localized_name": "帧率"
+        },
+        {
+          "widget": {
+            "name": "bit_depth"
+          },
+          "shape": 7,
+          "name": "bit_depth",
+          "label": "bit_depth",
+          "type": "INT",
+          "localized_name": "bit_depth"
+        }
+      ],
+      "flags": {},
+      "id": 17,
+      "type": "CreateVideo",
+      "properties": {
+        "widget_ue_connectable": {
+          "fps": true,
+          "bit_depth": true
+        },
+        "Node name for S&R": "CreateVideo"
+      },
+      "order": 8
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "video_url",
+          "label": "video_url",
+          "type": "STRING",
+          "localized_name": "video_url"
+        },
+        {
+          "name": "video",
+          "label": "video",
+          "type": "VIDEO",
+          "localized_name": "video"
+        }
+      ],
+      "size": [
+        210,
+        204
+      ],
+      "pos": [
+        2120,
+        360
+      ],
+      "widgets_values": [
+        "muweave/director_ref2va",
+        "mp4",
+        "h264",
+        "auto"
+      ],
+      "inputs": [
+        {
+          "name": "video",
+          "link": 21,
+          "label": "video",
+          "type": "VIDEO",
+          "localized_name": "视频"
+        },
+        {
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "name": "filename_prefix",
+          "label": "filename_prefix",
+          "type": "STRING",
+          "localized_name": "文件名前缀"
+        },
+        {
+          "widget": {
+            "name": "format"
+          },
+          "name": "format",
+          "label": "format",
+          "type": "COMBO",
+          "localized_name": "格式"
+        },
+        {
+          "widget": {
+            "name": "codec"
+          },
+          "name": "codec",
+          "label": "codec",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "localized_name": "编码器"
+        },
+        {
+          "widget": {
+            "name": "codec.encoding"
+          },
+          "shape": 7,
+          "name": "codec.encoding",
+          "label": "codec.encoding",
+          "type": "COMFY_DYNAMICCOMBO_V3",
+          "localized_name": "encoding"
+        }
+      ],
+      "flags": {},
+      "id": 18,
+      "type": "SaveVideo",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "SaveVideo"
+      },
+      "order": 9
+    },
+    {
+      "outputs": [],
+      "color": "#222",
+      "widgets_values": [
+        "## 导演台 · MiniMax H3 Ref2VA\n\n基于 RunningHub 社区 A-5 MiniMax-H3 参考生视频 RH 版。\n\n图片 1、2 分别对应人物；软件提交时会按镜头资产自动扩展到最多 9 张参考图，并在连续镜头中加入上一镜头末帧和视频作为参考。\n\n参考图用于保持身份和场景，不会强制成为首帧；跨镜头仍需检查生成结果。"
+      ],
+      "inputs": [],
+      "flags": {},
+      "type": "MarkdownNote",
+      "title": "导演台 · 多参考图",
+      "mode": 0,
+      "bgcolor": "#000",
+      "size": [
+        420,
+        300
+      ],
+      "pos": [
+        -420,
+        40
+      ],
+      "id": 19,
+      "properties": {
+        "widget_ue_connectable": {}
+      },
+      "order": 10
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            1
+          ],
+          "label": "图像",
+          "type": "IMAGE",
+          "localized_name": "图像"
+        },
+        {
+          "name": "MASK",
+          "slot_index": 1,
+          "links": [],
+          "label": "遮罩",
+          "type": "MASK",
+          "localized_name": "遮罩"
+        }
+      ],
+      "size": [
+        320,
+        314
+      ],
+      "pos": [
+        446.2918701171875,
+        -42.24922180175781
+      ],
+      "widgets_values": [
+        "fe536ca58870c4020ca06aa91da9145e73193e2a4ba1ea39e1cc97aa6a4d36d0.png",
+        "image"
+      ],
+      "inputs": [
+        {
+          "widget": {
+            "name": "image"
+          },
+          "name": "image",
+          "type": "COMBO",
+          "localized_name": "图像"
+        },
+        {
+          "widget": {
+            "name": "upload"
+          },
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "localized_name": "选择文件上传"
+        }
+      ],
+      "flags": {},
+      "id": 4,
+      "type": "LoadImage",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "LoadImage"
+      },
+      "order": 11
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            2
+          ],
+          "label": "图像",
+          "type": "IMAGE",
+          "localized_name": "图像"
+        },
+        {
+          "name": "MASK",
+          "slot_index": 1,
+          "links": [],
+          "label": "遮罩",
+          "type": "MASK",
+          "localized_name": "遮罩"
+        }
+      ],
+      "size": [
+        320,
+        314
+      ],
+      "pos": [
+        443.7215270996094,
+        345.3552551269531
+      ],
+      "widgets_values": [
+        "c9e0b79dc0e5140c65eb3c9d089ce51c56dc233e905802aa01554214c2f4b4f8.png",
+        "image"
+      ],
+      "inputs": [
+        {
+          "widget": {
+            "name": "image"
+          },
+          "name": "image",
+          "type": "COMBO",
+          "localized_name": "图像"
+        },
+        {
+          "widget": {
+            "name": "upload"
+          },
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "localized_name": "选择文件上传"
+        }
+      ],
+      "flags": {},
+      "id": 6,
+      "type": "LoadImage",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "LoadImage"
+      },
+      "order": 12
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "target",
+          "slot_index": 0,
+          "links": [
+            13,
+            14
+          ],
+          "label": "target",
+          "type": "MINIMAX_H3_TARGET",
+          "localized_name": "target"
+        },
+        {
+          "name": "shape_info",
+          "slot_index": 1,
+          "links": [],
+          "label": "shape_info",
+          "type": "STRING",
+          "localized_name": "shape_info"
+        }
+      ],
+      "size": [
+        380,
+        204
+      ],
+      "pos": [
+        1240,
+        40
+      ],
+      "widgets_values": [
+        "16:9",
+        5,
+        1344,
+        768
+      ],
+      "inputs": [
+        {
+          "name": "references",
+          "link": 22,
+          "label": "references",
+          "type": "MINIMAX_H3_REFERENCES",
+          "localized_name": "references"
+        },
+        {
+          "widget": {
+            "name": "aspect_ratio"
+          },
+          "name": "aspect_ratio",
+          "label": "aspect_ratio",
+          "type": "COMBO",
+          "localized_name": "aspect_ratio"
+        },
+        {
+          "widget": {
+            "name": "duration_seconds"
+          },
+          "name": "duration_seconds",
+          "label": "duration_seconds",
+          "type": "FLOAT",
+          "localized_name": "duration_seconds"
+        },
+        {
+          "widget": {
+            "name": "width"
+          },
+          "shape": 7,
+          "name": "width",
+          "label": "width",
+          "type": "INT",
+          "localized_name": "width"
+        },
+        {
+          "widget": {
+            "name": "height"
+          },
+          "shape": 7,
+          "name": "height",
+          "label": "height",
+          "type": "INT",
+          "localized_name": "height"
+        }
+      ],
+      "flags": {},
+      "id": 12,
+      "type": "RHMiniMaxH3Ref2VATarget",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VATarget"
+      },
+      "order": 13
+    },
+    {
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "conditioning",
+          "slot_index": 0,
+          "links": [
+            16
+          ],
+          "label": "conditioning",
+          "type": "MINIMAX_H3_CONDITIONING",
+          "localized_name": "conditioning"
+        }
+      ],
+      "size": [
+        420,
+        280
+      ],
+      "pos": [
+        1240,
+        280
+      ],
+      "widgets_values": [
+        "角色 <Picture 1> 和 <Picture 2> 在参考场景中自然互动。保持人物身份、服装、环境与对白一致。",
+        "match"
+      ],
+      "inputs": [
+        {
+          "name": "h3_text_encoder",
+          "link": 11,
+          "label": "h3_text_encoder",
+          "type": "MINIMAX_H3_TEXT_ENCODER",
+          "localized_name": "h3_text_encoder"
+        },
+        {
+          "name": "h3_vae_bundle",
+          "link": 12,
+          "label": "h3_vae_bundle",
+          "type": "MINIMAX_H3_VAE_BUNDLE",
+          "localized_name": "h3_vae_bundle"
+        },
+        {
+          "name": "target",
+          "link": 13,
+          "label": "target",
+          "type": "MINIMAX_H3_TARGET",
+          "localized_name": "target"
+        },
+        {
+          "name": "references",
+          "link": 23,
+          "label": "references",
+          "type": "MINIMAX_H3_REFERENCES",
+          "localized_name": "references"
+        },
+        {
+          "widget": {
+            "name": "prompt"
+          },
+          "name": "prompt",
+          "label": "prompt",
+          "type": "STRING",
+          "localized_name": "prompt"
+        },
+        {
+          "widget": {
+            "name": "ref_image_size"
+          },
+          "shape": 7,
+          "name": "ref_image_size",
+          "label": "ref_image_size",
+          "type": "COMBO",
+          "localized_name": "ref_image_size"
+        }
+      ],
+      "flags": {},
+      "id": 13,
+      "type": "RHMiniMaxH3Ref2VAEncode",
+      "properties": {
+        "widget_ue_connectable": {},
+        "Node name for S&R": "RHMiniMaxH3Ref2VAEncode"
+      },
+      "order": 14
+    },
+    {
+      "outputs": [],
+      "color": "#222",
+      "widgets_values": [
+        "## 手动运行\n\n替换左侧两张示例参考图，并在提示词中用 <Picture 1>、<Picture 2> 指明人物。镜头需要更多参考图时，可继续串联 RHMiniMaxH3Ref2VAImageReference。\n\n软件调用时自动上传本镜头的人物、场景和物品图，连续镜头还会上传上一镜头末帧与视频。\n\n本工作流使用 Ref2VA 模型；参考图不是首帧硬约束。"
+      ],
+      "inputs": [],
+      "flags": {},
+      "type": "MarkdownNote",
+      "title": "导演台输入说明",
+      "mode": 0,
+      "bgcolor": "#000",
+      "size": [
+        425.6546325683594,
+        460.0058898925781
+      ],
+      "pos": [
+        -420,
+        360
+      ],
+      "id": 20,
+      "properties": {
+        "widget_ue_connectable": {}
+      },
+      "order": 15
+    }
+  ],
+  "extra": {
+    "links_added_by_ue": [],
+    "ue_links": [],
+    "0246.VERSION": [
+      0,
+      0,
+      4
+    ],
+    "workflow_note": "MiniMax H3 Ref2VA 全链参考 — 2 图 + 1 视频 + 1 音频 + prompt。参考链有序：Image1→Image2→Video→Audio。分别上传到 ComfyUI input/ 目录，改文件名即可。图片只提取形象，不作为首帧。",
+    "ds": {
+      "offset": [
+        508.33948614751887,
+        -18.747270548153413
+      ],
+      "scale": 1.061076460950001
+    }
+  },
+  "groups": [
+    {
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {},
+      "id": 1,
+      "title": "Models",
+      "bounding": [
+        10,
+        10,
+        450,
+        650
+      ]
+    },
+    {
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {},
+      "id": 2,
+      "title": "Reference Chain (ordered)",
+      "bounding": [
+        430,
+        10,
+        800,
+        630
+      ]
+    },
+    {
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {},
+      "id": 3,
+      "title": "Target & Encode",
+      "bounding": [
+        1210,
+        10,
+        490,
+        580
+      ]
+    },
+    {
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {},
+      "id": 4,
+      "title": "Sampling",
+      "bounding": [
+        1670,
+        10,
+        440,
+        580
+      ]
+    },
+    {
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {},
+      "id": 5,
+      "title": "Decode & Output",
+      "bounding": [
+        2090,
+        10,
+        480,
+        520
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      4,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      6,
+      0,
+      7,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      5,
+      0,
+      7,
+      1,
+      "MINIMAX_H3_REFERENCES"
+    ],
+    [
+      8,
+      14,
+      0,
+      15,
+      2,
+      "MINIMAX_H3_AV_LATENT"
+    ],
+    [
+      11,
+      1,
+      0,
+      13,
+      0,
+      "MINIMAX_H3_TEXT_ENCODER"
+    ],
+    [
+      12,
+      3,
+      0,
+      13,
+      1,
+      "MINIMAX_H3_VAE_BUNDLE"
+    ],
+    [
+      13,
+      12,
+      0,
+      13,
+      2,
+      "MINIMAX_H3_TARGET"
+    ],
+    [
+      14,
+      12,
+      0,
+      14,
+      0,
+      "MINIMAX_H3_TARGET"
+    ],
+    [
+      15,
+      2,
+      0,
+      15,
+      0,
+      "MINIMAX_H3_DIRECT_MODEL"
+    ],
+    [
+      16,
+      13,
+      0,
+      15,
+      1,
+      "MINIMAX_H3_CONDITIONING"
+    ],
+    [
+      17,
+      15,
+      0,
+      16,
+      1,
+      "MINIMAX_H3_AV_LATENT"
+    ],
+    [
+      18,
+      3,
+      0,
+      16,
+      0,
+      "MINIMAX_H3_VAE_BUNDLE"
+    ],
+    [
+      19,
+      16,
+      0,
+      17,
+      0,
+      "IMAGE"
+    ],
+    [
+      20,
+      16,
+      1,
+      17,
+      1,
+      "AUDIO"
+    ],
+    [
+      21,
+      17,
+      0,
+      18,
+      0,
+      "VIDEO"
+    ],
+    [
+      22,
+      7,
+      0,
+      12,
+      0,
+      "MINIMAX_H3_REFERENCES"
+    ],
+    [
+      23,
+      7,
+      0,
+      13,
+      3,
+      "MINIMAX_H3_REFERENCES"
+    ]
+  ],
+  "id": "27c4fff0-1912-4170-9e51-3bb84822670e",
+  "config": {},
+  "version": 0.4,
+  "last_node_id": 21,
+  "revision": 0
+}

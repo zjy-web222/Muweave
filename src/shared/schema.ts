@@ -178,6 +178,7 @@ export const jobSchema = z.object({
   instanceType: z.enum(['default', 'plus']).optional(),
   previousShotId: id.optional(),
   referenceMediaId: id.optional(),
+  referenceMediaIds: z.array(id).max(9).optional(),
   aspect: projectSchema.shape.aspect.optional(),
   mappings: z.array(mappingSchema),
   snapshot: shotSchema,

@@ -634,7 +634,7 @@ if (primary)
             {
               const adjusted = queue.enqueue(c.projectId, c.shotIds, c.stopOnFailure)
               message = adjusted
-                ? `已加入视频任务队列；${adjusted} 个镜头已自动延长到对白所需时长`
+                ? `已加入视频任务队列；${adjusted} 个镜头已自动延长到模型或对白所需时长`
                 : '已加入视频任务队列'
             }
             break

@@ -28,6 +28,7 @@ import {
   projectSchema,
   type Job,
 } from '../src/shared/schema'
+import directorRef2vaGraph from './fixtures/director-ref2va-api.json'
 
 let root: string, store: Store
 beforeEach(async () => {
@@ -451,6 +452,68 @@ describe('safe paid-job lifecycle', () => {
     expect(source['17'].inputs.prompt).toBe('old')
     expect(() => prepareVideoWorkflow({}, shot, '16:9')).toThrow('视频节点已变化')
   })
+  it('rebuilds the Ref2VA chain from distinct images and the previous video', () => {
+    const shot = { ...blankShot('episode'), videoPrompt: 'Continue along the river', duration: 5, seed: 83 }
+    const source = {
+      '4': { class_type: 'LoadImage', inputs: { image: 'unrelated-template-portrait.png' } },
+      '5': { class_type: 'RHMiniMaxH3Ref2VAImageReference', inputs: { image: ['4', 0] } },
+      '6': { class_type: 'LoadImage', inputs: { image: 'unrelated-template-scene.png' } },
+      '7': { class_type: 'RHMiniMaxH3Ref2VAImageReference', inputs: { image: ['6', 0], references: ['5', 0] } },
+      '12': { class_type: 'RHMiniMaxH3Ref2VATarget', inputs: { duration_seconds: 5 } },
+      '13': { class_type: 'RHMiniMaxH3Ref2VAEncode', inputs: { prompt: 'old' } },
+      '15': { class_type: 'RHMiniMaxH3DualSigmaSampler', inputs: { seed: 42 } },
+    }
+    const graph = prepareVideoWorkflow(source, shot, '9:16', {
+      references: ['previous.png', 'father.png', 'sister.png', 'riverside.png'], video: 'previous.mp4',
+    })
+    expect(Object.values(graph).filter((node) => node.class_type === 'RHMiniMaxH3Ref2VAImageReference')).toHaveLength(4)
+    expect(Object.values(graph).filter((node) => node.class_type === 'LoadImage').map((node) => node.inputs.image))
+      .toEqual(['previous.png', 'father.png', 'sister.png', 'riverside.png'])
+    expect(Object.values(graph).some((node) => JSON.stringify(node.inputs).includes('unrelated-template'))).toBe(false)
+    const video = Object.entries(graph).find(([, node]) => node.class_type === 'RHMiniMaxH3Ref2VAVideoReference')!
+    expect(video[1].inputs.reference_type).toBe('video')
+    expect(graph['12'].inputs).toMatchObject({ references: [video[0], 0], aspect_ratio: '9:16', duration_seconds: 5, width: 480, height: 864 })
+    expect(graph['13'].inputs).toMatchObject({ references: [video[0], 0], prompt: 'Continue along the river' })
+    expect(graph['15'].inputs.seed).toBe(83)
+    expect(source['13'].inputs.prompt).toBe('old')
+  })
+  it('adapts the saved RunningHub director graph without dangling node links', () => {
+    const shot = { ...blankShot('episode'), videoPrompt: 'A quiet riverside exchange', duration: 4 }
+    const graph = prepareVideoWorkflow(directorRef2vaGraph, shot, '16:9', {
+      references: ['father.png', 'sister.png', 'riverside.png'],
+    })
+    for (const node of Object.values(graph))
+      for (const value of Object.values(node.inputs))
+        if (Array.isArray(value) && typeof value[0] === 'string' && typeof value[1] === 'number')
+          expect(graph[value[0]], `missing linked node ${value[0]}`).toBeDefined()
+    expect(graph['12'].inputs).toMatchObject({ duration_seconds: 4, width: 864, height: 480 })
+    expect(Object.values(graph).filter((node) => node.class_type === 'RHMiniMaxH3Ref2VAImageReference')).toHaveLength(3)
+    expect(prepareVideoWorkflow(directorRef2vaGraph, shot, '16:9')['17'].class_type).toBe('MiniMaxH3ImageToVideo')
+  })
+  it('submits every linked asset image to the Ref2VA workflow', async () => {
+    const p = store.save(createProject('two visual references', '16:9', true))
+    const png = join(root, 'reference.png')
+    await writeFile(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'))
+    for (const asset of p.assets.filter((item) => p.shots[0].assetIds.includes(item.id)).slice(0, 2))
+      await importMedia(store, p.id, asset.id, 'reference', png)
+    const api = {
+      workflow: vi.fn().mockResolvedValue({
+        '12': { class_type: 'RHMiniMaxH3Ref2VATarget', inputs: {} },
+        '13': { class_type: 'RHMiniMaxH3Ref2VAEncode', inputs: {} },
+        '15': { class_type: 'RHMiniMaxH3DualSigmaSampler', inputs: {} },
+      }),
+      upload: vi.fn().mockImplementation(async (_site: string, file: string) => file.split(/[\\/]/).at(-1)),
+      start: vi.fn().mockResolvedValue('987'),
+    } as unknown as RunningHub
+    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[0].id], false)
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
+    const graph = vi.mocked(api.start).mock.calls[0][2]!
+    const references = Object.entries(graph).filter(([, node]) => node.class_type === 'RHMiniMaxH3Ref2VAImageReference')
+    expect(references).toHaveLength(2)
+    expect(graph['13'].inputs.prompt).toContain('<Picture 2>')
+    expect(graph['13'].inputs.references).toEqual([references[1][0], 0])
+    expect(store.jobs()[0].referenceMediaIds).toHaveLength(2)
+  })
   it.each(['plus', 'default'] as const)('sends the complete workflow with %s instance', async (instanceType) => {
     const j = makeJob()
     j.instanceType = instanceType
@@ -462,6 +525,20 @@ describe('safe paid-job lifecycle', () => {
     expect(url).toBe(`${j.site}/task/openapi/create`)
     expect(body).toMatchObject({ instanceType, workflowId: j.workflowId, apiKey: 'local-test-key' })
     expect(JSON.parse(body.workflow)['17'].inputs.prompt).toBe('test')
+  })
+  it('shows the remote node validation reason for a failed task', async () => {
+    const transport = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 805,
+      msg: 'APIKEY_TASK_STATUS_ERROR',
+      data: { failedReason: {
+        node_name: 'RHMiniMaxH3Ref2VAVideoReference',
+        exception_message: 'Value not in list',
+        traceback: "reference_type: 'video_only' not in ['video', 'video_audio']",
+      } },
+    }), { status: 200 }))
+    const api = new RunningHub(() => 'local-test-key', transport)
+    expect(await api.failure({ ...makeJob(), taskId: '123' }))
+      .toContain("reference_type: 'video_only' not in ['video', 'video_audio']")
   })
   it('prepares the built-in workflow before submitting a Standard job', async () => {
     const p = store.save(createProject('standard submit', '16:9', true))

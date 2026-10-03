@@ -935,7 +935,7 @@ function App() {
                 {t('· 当前选择')} {batch.length} {t('镜头')}
               </p>
               <p className="small muted">
-                {t('同一场景的后续镜头会等待上一镜完成，并用其末帧衔接；换场景时使用镜头首帧或一张关联资产图重新起镜。')}
+                {t('每镜最多使用 9 张人物、场景、道具参考图；同场景后续镜头还会参考上一镜的视频和末帧。参考图不是锁定首帧，成片请逐镜检查。')}
               </p>
               {!state.hasKey && (
                 <Button onClick={() => setSettings(true)}>{t('先绑定 RunningHub Key')}</Button>

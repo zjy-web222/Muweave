@@ -1,0 +1,222 @@
+{
+  "1": {
+    "class_type": "RHMiniMaxH3Ref2VATextEncoderLoader",
+    "inputs": {
+      "text_encoder_path": "qwen3-vl-32b-int8_convrot.safetensors",
+      "dtype": "auto",
+      "model_root": "MiniMax-H3"
+    },
+    "_meta": {
+      "title": "Ref2VA Qwen3-VL Loader"
+    }
+  },
+  "2": {
+    "class_type": "RHMiniMaxH3Ref2VAModelLoader",
+    "inputs": {
+      "transformer_path": "MiniMax-H3-Ref2VA-int8_convrot.safetensors",
+      "dtype": "auto",
+      "attention_backend": "auto",
+      "model_root": "MiniMax-H3"
+    },
+    "_meta": {
+      "title": "Ref2VA DiT Loader"
+    }
+  },
+  "3": {
+    "class_type": "RHMiniMaxH3Ref2VAVAELoader",
+    "inputs": {
+      "audio_vae_path": "MiniMax-H3-audio_vae.safetensors",
+      "video_vae_path": "MiniMax-H3-video_vae.safetensors",
+      "model_root": "MiniMax-H3"
+    },
+    "_meta": {
+      "title": "Ref2VA Dual VAE Loader"
+    }
+  },
+  "4": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "template-a.png"
+    },
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "5": {
+    "class_type": "RHMiniMaxH3Ref2VAImageReference",
+    "inputs": {
+      "image": [
+        "4",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Image Ref 1"
+    }
+  },
+  "6": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "template-b.png"
+    },
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "7": {
+    "class_type": "RHMiniMaxH3Ref2VAImageReference",
+    "inputs": {
+      "image": [
+        "6",
+        0
+      ],
+      "references": [
+        "5",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Image Ref 2"
+    }
+  },
+  "12": {
+    "class_type": "RHMiniMaxH3Ref2VATarget",
+    "inputs": {
+      "duration_seconds": 5,
+      "aspect_ratio": "16:9",
+      "references": [
+        "7",
+        0
+      ],
+      "width": 1344,
+      "height": 768
+    },
+    "_meta": {
+      "title": "RunningHub MiniMax H3 Ref2VA Target (Legacy)"
+    }
+  },
+  "13": {
+    "class_type": "RHMiniMaxH3Ref2VAEncode",
+    "inputs": {
+      "h3_vae_bundle": [
+        "3",
+        0
+      ],
+      "references": [
+        "7",
+        0
+      ],
+      "h3_text_encoder": [
+        "1",
+        0
+      ],
+      "prompt": "Template prompt",
+      "ref_image_size": "match",
+      "target": [
+        "12",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "RunningHub MiniMax H3 Ref2VA Encode (Legacy)"
+    }
+  },
+  "14": {
+    "class_type": "RHMiniMaxH3EmptyAVLatent",
+    "inputs": {
+      "target": [
+        "12",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Empty AV Latent"
+    }
+  },
+  "15": {
+    "class_type": "RHMiniMaxH3DualSigmaSampler",
+    "inputs": {
+      "seed": 42,
+      "sigma_points": 21,
+      "cache_dit_rdt": 0.12,
+      "denoise_video": true,
+      "velocity_stride": 4,
+      "accel": "off",
+      "video_shift": 12,
+      "sampler_mode": "res_multistep",
+      "cache_dit_mc": 2,
+      "allow_accel_with_res_multistep": false,
+      "conditioning": [
+        "13",
+        0
+      ],
+      "av_latent": [
+        "14",
+        0
+      ],
+      "cache_dit_warmup": 4,
+      "audio_shift": 3,
+      "h3_model": [
+        "2",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Dual Sigma Sampler"
+    }
+  },
+  "16": {
+    "class_type": "RHMiniMaxH3DecodeAV",
+    "inputs": {
+      "h3_vae_bundle": [
+        "3",
+        0
+      ],
+      "sampled_av_latent": [
+        "15",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "Decode Video + Audio"
+    }
+  },
+  "17": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "codec": "none",
+      "images": [
+        "16",
+        0
+      ],
+      "fps": 24,
+      "audio": [
+        "16",
+        1
+      ],
+      "bit_depth": 8,
+      "color_space": "sRGB"
+    },
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "18": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "format.codec.encoding": "auto",
+      "codec": "auto",
+      "filename_prefix": "muweave/director_ref2va",
+      "fw_video_preview": "",
+      "format": "mp4",
+      "video": [
+        "17",
+        0
+      ],
+      "format.codec": "h264"
+    },
+    "_meta": {
+      "title": "Save Video"
+    }
+  }
+}
