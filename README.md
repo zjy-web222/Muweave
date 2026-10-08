@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-<img src="src/renderer/assets/muweave-mark.png" width="96" alt="Muweave 幕织标志">
+![Muweave 幕织标志](src/renderer/assets/muweave-mark.png)
 
 **Weave your story. 织就你的故事。**
 
@@ -20,7 +20,6 @@
 - [数据与备份](#数据与备份)
 - [开发与验证](#开发与验证)
 - [常见问题与限制](#常见问题与限制)
-- [品牌与兼容约定](#品牌与兼容约定)
 
 ## 主要功能
 
@@ -266,15 +265,3 @@ tests/           核心、图片、桌面及插件验证
 视频结果下载限制为允许的 HTTPS RunningHub / xiaoyaoyou.com 子域，单文件最多 1 GB；其他 CDN、过期链接或不支持的格式需要人工下载导入，Task ID 会保留。
 
 当前成片模块提供基础整集拼接，没有自动 TTS、口型同步、多轨剪辑、转场或自动配乐。人物、环境、首帧和对白的生成准确度需要人工审看。macOS 打包、账号生成及导出未进行实机验证。
-
-## 品牌与兼容约定
-
-**幕织**：“幕”指银幕、场景与戏剧的一幕；“织”指把人物、剧本、镜头和素材组织成作品。**Muweave** 取“幕”的读音与 weave，建议读作 _moo-weev_。
-
-正式标志采用已选定的 A / FRAME 方案：石墨色取景框形成抽象 M，鼠尾草绿画面居中。各界面和打包图标复用 [muweave-mark.png](src/renderer/assets/muweave-mark.png)，不另造近似标志。品牌色为石墨 `#272A28`、鼠尾草绿 `#829574`、暖白 `#F4F5EE`。这是创意命名，不代表商标或域名已经注册或获准使用。
-
-品牌图像从选定方案提取，保留原始编辑提示词以便追溯：
-
-> Edit the provided image, which is the selected A / FRAME Muweave logo presentation. Extract and faithfully preserve ONLY the large central symbol: two graphite geometric outward frame wings forming an abstract M with the sage trapezoid screen in the middle. Preserve its exact recognizable silhouette and arrangement; do not invent another logo. Remove all text, labels, small examples and presentation layout. Deliver one centered standalone app mark, occupying 80% of square canvas, even margins. Clean strictly flat fills graphite #272A28 and sage #829574, no gradients, no shadows, no bevels, no outlines. Genuine transparent background. Smooth sharp high-resolution edges and balanced small-icon clarity. No wordmark.
-
-旧 ZIP 的 `director-desk` 格式标识、`director:*` IPC 名称与 `DIRECTOR_DATA_DIR` 测试变量是保留的兼容契约。第三方二进制与依赖的许可信息以各自随附文件为准。

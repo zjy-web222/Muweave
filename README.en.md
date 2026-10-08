@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-<img src="src/renderer/assets/muweave-mark.png" width="96" alt="Muweave logo">
+![Muweave logo](src/renderer/assets/muweave-mark.png)
 
 **Weave your story. 织就你的故事。**
 
@@ -20,7 +20,6 @@ Projects, media, and task records stay on your computer. AI generation connects 
 - [Data and backups](#data-and-backups)
 - [Development and verification](#development-and-verification)
 - [Troubleshooting and limitations](#troubleshooting-and-limitations)
-- [Brand and compatibility](#brand-and-compatibility)
 
 ## Features
 
@@ -266,15 +265,3 @@ Development rules are in [AGENTS.md](AGENTS.md). `node_modules/`, `dist/`, `rele
 Video downloads accept only allowed HTTPS RunningHub / xiaoyaoyou.com subdomains, up to 1 GB per file. Other CDNs, expired links, or unsupported formats require manual download and import; the Task ID is retained.
 
 Film assembly currently provides basic episode concatenation, without automatic TTS, lip synchronization, multitrack editing, transitions, or automatic music. Character, environment, first-frame, and dialogue accuracy require review. macOS packaging, account generation, and exports have not been verified on a physical machine.
-
-## Brand and compatibility
-
-**幕织** combines “幕,” meaning screen, scene, or act, with “织,” meaning to weave characters, scripts, shots, and media into a work. **Muweave** combines the sound of “幕” with “weave”; the suggested pronunciation is _moo-weev_.
-
-The selected A / FRAME logo uses graphite framing wings to form an abstract M around a sage screen. Interfaces and packaged icons reuse [muweave-mark.png](src/renderer/assets/muweave-mark.png). Brand colors are graphite `#272A28`, sage `#829574`, and warm white `#F4F5EE`. The creative name does not imply trademark or domain registration or clearance.
-
-The mark was extracted from the selected design. Its original editing prompt is retained for traceability:
-
-> Edit the provided image, which is the selected A / FRAME Muweave logo presentation. Extract and faithfully preserve ONLY the large central symbol: two graphite geometric outward frame wings forming an abstract M with the sage trapezoid screen in the middle. Preserve its exact recognizable silhouette and arrangement; do not invent another logo. Remove all text, labels, small examples and presentation layout. Deliver one centered standalone app mark, occupying 80% of square canvas, even margins. Clean strictly flat fills graphite #272A28 and sage #829574, no gradients, no shadows, no bevels, no outlines. Genuine transparent background. Smooth sharp high-resolution edges and balanced small-icon clarity. No wordmark.
-
-The legacy `director-desk` ZIP format identifier, `director:*` IPC names, and `DIRECTOR_DATA_DIR` test variable are retained compatibility contracts. Third-party binaries and dependencies are governed by their accompanying license files.
