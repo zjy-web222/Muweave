@@ -8,11 +8,9 @@
 
 项目、素材和任务记录保存在本机；AI 生成需要连接 ChatGPT 或 RunningHub。当前运行环境以 **Windows x64** 为主。
 
-![幕织导演台：示例项目的镜头列表](./docs/images/muweave-studio.jpg?raw=true)
+<img width="1524" height="951" alt="幕织导演台：示例项目的镜头列表" src="https://github.com/user-attachments/assets/3ad6603f-ddff-40ea-aa26-9275698ecbc6">
 
 _软件截图：示例项目的导演台镜头列表，浅色模式。_
-
-[查看完整截图](docs/images/muweave-studio.jpg)
 
 ## 目录
 
