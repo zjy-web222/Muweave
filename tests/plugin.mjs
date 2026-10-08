@@ -119,6 +119,62 @@ try {
   await page.getByText('资产图片已上传', { exact: true }).waitFor()
   assert((await tool('read', { projectId: project.id })).project.assets.some((a) => a.selectedMediaId))
 
+  // Replace only the external Codex process: the actual Studio, command handler,
+  // image decoder, SQLite import and media route remain under test.
+  await app.evaluate(() => {
+    const cp = process.getBuiltinModule('child_process')
+    const { syncBuiltinESMExports } = process.getBuiltinModule('module')
+    const { EventEmitter } = process.getBuiltinModule('events')
+    const { PassThrough, Writable } = process.getBuiltinModule('stream')
+    const original = cp.spawn
+    cp.spawn = (file, args, options) => {
+      if (!String(file).endsWith('codex.exe')) return original(file, args, options)
+      const child = Object.assign(new EventEmitter(), { stdout:new PassThrough(), stderr:new PassThrough(), exitCode:null })
+      child.kill = () => { child.exitCode=0; child.emit('close',0); return true }
+      child.stdin = new Writable({write(chunk, _encoding, done) {
+        const r=JSON.parse(String(chunk))
+        queueMicrotask(() => {
+          if(!r.id)return
+          const result = r.method==='modelProvider/capabilities/read' ? {imageGeneration:true} :
+            r.method==='model/list' ? {data:[{model:'test-default-image-model',isDefault:true}]} :
+            r.method==='thread/start' ? {thread:{id:'reference-image-test'}} : {}
+          child.stdout.write(JSON.stringify({id:r.id,result})+'\n')
+          if(r.method==='turn/start'){
+            child.stdout.write(JSON.stringify({method:'item/completed',params:{threadId:'reference-image-test',
+              item:{type:'imageGeneration',status:'completed',result:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='}}})+'\n')
+            child.stdout.write(JSON.stringify({method:'turn/completed',params:{threadId:'reference-image-test',turn:{items:[]}}})+'\n')
+          }
+        })
+        done()
+      }})
+      if(args[0]==='login')queueMicrotask(()=>{child.stderr.write('Logged in using ChatGPT');child.exitCode=0;child.emit('close',0)})
+      return child
+    }
+    syncBuiltinESMExports()
+  })
+  const referenceAsset = (await tool('read',{projectId:project.id})).project.assets[0]
+  const referenceCard = page.locator('.asset-card').filter({has:page.getByRole('heading',{name:referenceAsset.name,exact:true})})
+  await referenceCard.getByRole('button',{name:'生成参考图',exact:true}).click()
+  const referenceDialog=page.getByRole('dialog',{name:/AI 生成参考图/})
+  assert((await referenceDialog.getByLabel('发送给 ChatGPT 的提示词').inputValue()).includes(referenceAsset.name))
+  assert.equal(await referenceDialog.getByRole('button',{name:/复制|导入/}).count(),0)
+  await referenceDialog.screenshot({path:join(evidence,'plugin-06-direct-reference-dialog.png')})
+  await referenceDialog.getByRole('button',{name:'在软件中直接生成图片',exact:true}).click()
+  await referenceDialog.waitFor({state:'hidden'})
+  const generated=(await tool('read',{projectId:project.id})).project
+  const firstReference=generated.assets.find(a=>a.id===referenceAsset.id).selectedMediaId
+  assert(firstReference)
+  assert.equal(generated.media.find(m=>m.id===firstReference).slot,'reference')
+  await referenceCard.locator('.asset-visual img').evaluate(img=>img.decode())
+  assert.equal(await referenceCard.locator('.asset-visual img').evaluate(img=>img.naturalWidth),1)
+  await page.screenshot({path:join(evidence,'plugin-07-reference-saved.png')})
+  const directImage=await tool('generate',{command:{type:'generateImage',projectId:project.id,ownerId:referenceAsset.id,slot:'reference'}})
+  assert.match(directImage.text,/^media:\/\/asset\//)
+  const regenerated=(await tool('read',{projectId:project.id})).project
+  assert.notEqual(regenerated.assets.find(a=>a.id===referenceAsset.id).selectedMediaId,firstReference)
+  assert.equal(regenerated.media.filter(m=>m.ownerId===referenceAsset.id&&m.slot==='reference').length,2)
+  assert(regenerated.media.find(m=>m.id===regenerated.assets.find(a=>a.id===referenceAsset.id).selectedMediaId).prompt.includes(referenceAsset.name))
+
   await page.setViewportSize({ width: 900, height: 900 })
   await page.getByRole('button', { name: /^剧本(?: 01)?$/ }).click()
   assert(await page.getByRole('button', { name: '项目导航', exact: true }).isVisible())
@@ -158,7 +214,7 @@ try {
   }
   await host.screenshot({ path: join(evidence, 'plugin-05-mcp-app.png') })
   assert.deepEqual(errors, [])
-  console.log('PASS: authenticated runtime, MCP stdio, native service, imports, exports, script archive, responsive Studio and MCP Apps UI. No paid jobs submitted.')
+  console.log('PASS: authenticated runtime, MCP stdio, native service, direct reference generation with automatic selection/versioning, imports, exports, script archive, responsive Studio and MCP Apps UI. No paid jobs submitted.')
 } finally {
   sidecar?.kill()
   await browser?.close()

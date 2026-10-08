@@ -259,7 +259,7 @@ export const commandSchema = z.discriminatedUnion('type', [
     ...pid,
     ownerId: id,
     slot: z.enum(['first', 'last', 'reference']),
-    prompt: z.string().min(1).max(12000),
+    prompt: z.string().trim().min(1).max(12000).optional(),
   }),
   z.object({ type: z.literal('shot'), ...pid, shot: shotSchema }),
   z.object({ type: z.literal('deleteShot'), ...pid, shotId: id }),

@@ -393,14 +393,18 @@ if (primary)
           }
           case 'generateImage': {
             const p = store.project(c.projectId)
-            if (c.slot === 'reference' ? !p.assets.some((a) => a.id === c.ownerId) : !p.shots.some((s) => s.id === c.ownerId))
+            const asset = c.slot === 'reference' ? p.assets.find((a) => a.id === c.ownerId) : undefined
+            const shot = c.slot !== 'reference' ? p.shots.find((s) => s.id === c.ownerId) : undefined
+            if (!asset && !shot)
               throw new Error('图片所属镜头或资产已不存在')
-            const bytes = await codex.image(c.prompt, p.aspect)
+            const prompt = c.prompt || buildPrompt(p, shot?.episodeId || p.episodes[0]?.id, 'image', shot, asset?.id)
+            const bytes = await codex.image(prompt, p.aspect)
             const file = store.file(p.id, `downloads/codex-${randomUUID()}.png`)
             await mkdir(store.file(p.id, 'downloads'), { recursive: true })
             await writeFile(file, bytes)
             try {
-              await importMedia(store, p.id, c.ownerId, c.slot, file, c.prompt)
+              const media = await importMedia(store, p.id, c.ownerId, c.slot, file, prompt)
+              text = `media://asset/${p.id}/${media.id}`
             } finally {
               await rm(file, { force: true })
             }

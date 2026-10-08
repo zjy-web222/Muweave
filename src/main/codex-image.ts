@@ -20,7 +20,7 @@ class CodexImageRpc {
   private nextId = 0
   private buffer = ''
   constructor(cli: string, cwd: string, env: NodeJS.ProcessEnv) {
-    this.child = spawn(cli, ['app-server', '--stdio'], {
+    this.child = spawn(cli, ['app-server', '--stdio', '-c', 'mcp_servers={}'], {
       cwd,
       env,
       windowsHide: true,
@@ -139,16 +139,25 @@ export async function generateCodexImage(
   try {
     rpc = new CodexImageRpc(cli, root, env)
     await rpc.call('initialize', {
-      clientInfo: { name: 'muweave', version: '0.1.1' },
+      clientInfo: { name: 'muweave', version: '0.2.2' },
       capabilities: { experimentalApi: true },
     })
     rpc.notify('initialized')
     const capabilities = await rpc.call('modelProvider/capabilities/read')
     if (!record(capabilities) || capabilities.imageGeneration !== true)
       throw new Error('当前 Codex 运行时不支持生图，请更新软件。')
+    // The text path ignores user config. Images must likewise avoid inheriting
+    // a desktop-only model which this bundled runtime/account cannot use.
+    const catalog = await rpc.call('model/list', { includeHidden: false })
+    const model = record(catalog) && Array.isArray(catalog.data)
+      ? catalog.data.find((entry: unknown) => record(entry) && entry.isDefault === true)
+      : undefined
+    if (!record(model) || typeof model.model !== 'string')
+      throw new Error('Codex 未返回默认生图模型，请更新软件后重试。')
     const started = await rpc.call('thread/start', {
       ephemeral: true,
       cwd: root,
+      model: model.model,
       modelProvider: 'openai',
       approvalPolicy: 'never',
       sandbox: 'read-only',
@@ -169,10 +178,11 @@ export async function generateCodexImage(
       throw new Error('Codex 图片会话未能启动。')
     const threadId = started.thread.id
     let imageReceived = false
+    let failure = ''
     let unsubscribe: () => void = () => undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     const completed = new Promise<Buffer>((resolveResult, rejectResult) => {
-      timer = setTimeout(() => rejectResult(new Error('ChatGPT 生图超时，请稍后重试。')), 4 * 60 * 1000)
+      timer = setTimeout(() => rejectResult(new Error(failure || 'ChatGPT 生图超时，请检查网络后手动重试。')), 8 * 60 * 1000)
       unsubscribe = rpc!.subscribe((event) => {
         if (event.method === 'transport/error') {
           rejectResult(new Error('Codex 图片服务已退出，请稍后重试。'))
@@ -184,6 +194,16 @@ export async function generateCodexImage(
           return
         }
         if (!record(event.params) || event.params.threadId !== threadId) return
+        if (event.method === 'error' && record(event.params.error)) {
+          const error = event.params.error
+          if (error.codexErrorInfo === 'usageLimitExceeded') failure = 'ChatGPT 图片额度已用完，请等待额度重置。'
+          else if (error.codexErrorInfo === 'unauthorized') failure = 'ChatGPT 授权已失效，请重新连接账号。'
+          else if (typeof error.message === 'string' && event.params.willRetry === false)
+            failure = `ChatGPT 生图失败：${error.message.slice(0, 400)}`
+          else if (typeof error.additionalDetails === 'string' && /timed out/i.test(error.additionalDetails))
+            failure = 'ChatGPT 连接超时，请检查网络后手动重试。'
+          if (event.params.willRetry === false) rejectResult(new Error(failure || 'ChatGPT 生图失败，请稍后重试。'))
+        }
         if (event.method === 'item/completed' && record(event.params.item) && event.params.item.type === 'imageGeneration') {
           imageReceived = true
           void codexImageBytes(event.params.item, root).then(resolveResult, rejectResult)
@@ -198,7 +218,9 @@ export async function generateCodexImage(
             rejectResult(new Error('ChatGPT 图片额度已用完，请等待额度重置。'))
           else if (record(turn) && record(turn.error) && turn.error.codexErrorInfo === 'unauthorized')
             rejectResult(new Error('ChatGPT 授权已失效，请重新连接账号。'))
-          else rejectResult(new Error('Codex 未返回图片，请检查网络或稍后重试。'))
+          else rejectResult(new Error(failure || (record(turn) && record(turn.error) && typeof turn.error.message === 'string'
+            ? `ChatGPT 生图失败：${turn.error.message.slice(0, 400)}`
+            : 'Codex 未返回图片，请检查网络或稍后重试。')))
         }
       })
     })

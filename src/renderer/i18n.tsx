@@ -174,6 +174,10 @@ export const en: Record<string, string> = {
   ' · 包含剧本': ' · Includes script',
   '个镜头 ·': 'shots ·',
   'ChatGPT 生图 ·': 'ChatGPT image ·',
+  'AI 生成参考图 ·': 'AI reference image ·',
+  生成后自动设为当前参考图: 'Automatically use the generated reference',
+  '正在生成图片，完成后自动保存，请保持窗口打开。':
+    'Generating and saving your image. Keep this window open.',
   编辑资产: 'Edit asset',
   映射来源: 'Mapping source',
   删除映射: 'Delete mapping',

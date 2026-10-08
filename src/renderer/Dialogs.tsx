@@ -121,7 +121,15 @@ export function GenerationDialog({
     [prompt, setPrompt] = useState(buildPrompt(p, episodeId, kind, shot, assetId)),
     [raw, setRaw] = useState(''),
     [step, setStep] = useState<'prompt' | 'result'>('prompt'),
-    [generating, setGenerating] = useState(false)
+    [generating, setGenerating] = useState(false),
+    [elapsed, setElapsed] = useState(0),
+    [error, setError] = useState('')
+  useEffect(() => {
+    if (!generating || kind !== 'image') return
+    const start = Date.now()
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    return () => window.clearInterval(timer)
+  }, [generating, kind])
   let valid = false,
     summary = t('等待生成结果或粘贴 JSON 后预览')
   if (raw.trim())
@@ -136,7 +144,7 @@ export function GenerationDialog({
     <Modal
       title={
         kind === 'image'
-          ? `${t('ChatGPT 生图 ·')} ${assetId ? p.assets.find((a) => a.id === assetId)?.name : slot === 'last' ? t('尾帧') : t('首帧')}`
+          ? `${t(assetId ? 'AI 生成参考图 ·' : 'ChatGPT 生图 ·')} ${assetId ? p.assets.find((a) => a.id === assetId)?.name : slot === 'last' ? t('尾帧') : t('首帧')}`
           : t('ChatGPT 创作助手')
       }
       subtitle={
@@ -162,7 +170,7 @@ export function GenerationDialog({
             <div className="notice">
               <ShieldCheck size={18} />
               <div>
-                {kind === 'image' ? t('直接生成图片') : t('直接生成文字')}
+                {kind === 'image' ? t(assetId ? '生成后自动设为当前参考图' : '直接生成图片') : t('直接生成文字')}
                 <p>
                   {kind === 'image'
                     ? t('使用与文字生成相同的 ChatGPT 授权；完成后自动保存为当前镜头或资产的图片素材。')
@@ -180,6 +188,13 @@ export function GenerationDialog({
                 onChange={(e) => setPrompt(e.target.value)}
               />
             </Field>
+            {kind === 'image' && generating && (
+              <p className="small muted" role="status">
+                {t('正在生成图片，完成后自动保存，请保持窗口打开。')} {Math.floor(elapsed / 60)}:
+                {String(elapsed % 60).padStart(2, '0')}
+              </p>
+            )}
+            {kind === 'image' && error && <p className="danger small" role="alert">{error}</p>}
           </>
         ) : (
           <>
@@ -246,6 +261,8 @@ export function GenerationDialog({
                 primary
                 disabled={generating || !prompt.trim()}
                 onClick={async () => {
+                  setError('')
+                  setElapsed(0)
                   setGenerating(true)
                   try {
                     const r = await run({
@@ -258,7 +275,7 @@ export function GenerationDialog({
                     if (r.ok) {
                       notice(t('图片已生成并保存到当前项目素材。'))
                       onClose()
-                    }
+                    } else setError(r.error)
                   } finally {
                     setGenerating(false)
                   }

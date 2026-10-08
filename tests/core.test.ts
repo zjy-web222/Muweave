@@ -41,6 +41,20 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('local project state', () => {
+  it('allows direct reference generation without copying a prompt and selects the saved image', async () => {
+    const p = store.save(createProject('Reference generation', '16:9', true))
+    const asset = p.assets[0]
+    expect(commandSchema.parse({type:'generateImage', projectId:p.id, ownerId:asset.id, slot:'reference'}))
+      .toMatchObject({slot:'reference', ownerId:asset.id})
+    const prompt = buildPrompt(p, p.episodes[0].id, 'image', undefined, asset.id)
+    expect(prompt).toContain(asset.name)
+    const image = join(root, 'generated.png')
+    await writeFile(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'))
+    const media = await importMedia(store, p.id, asset.id, 'reference', image, prompt)
+    expect(store.project(p.id).assets[0].selectedMediaId).toBe(media.id)
+    expect(store.project(p.id).media[0]).toMatchObject({slot:'reference', prompt})
+    expect(await readFile(store.file(p.id, media.file))).toEqual(await readFile(image))
+  })
   it('accepts a completed Codex PNG and rejects an unrelated saved path', async () => {
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')
     await expect(codexImageBytes({ type: 'imageGeneration', status: 'completed', result: png.toString('base64') }, root)).resolves.toEqual(png)

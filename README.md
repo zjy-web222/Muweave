@@ -60,7 +60,7 @@ npm run package:plugin
 npm run test:plugin
 ```
 
-生成 `release/muweave-plugin/`、`release/Muweave-0.2.1-plugin.zip` 和 `release/Muweave-0.2.1.ipollowork-plugin`。插件复用本机幕织的 SQLite 项目库、加密 Key、资产目录、FFmpeg 和视频队列。后台服务只监听 `127.0.0.1`，每次启动生成临时会话地址；已有幕织进程会被复用。宿主关闭后后台保留未完成任务，不重复提交付费请求。不会自动启动 Windows 服务或开机自启。
+生成 `release/muweave-plugin/`、`release/Muweave-0.2.2-plugin.zip` 和 `release/Muweave-0.2.2.ipollowork-plugin`。插件复用本机幕织的 SQLite 项目库、加密 Key、资产目录、FFmpeg 和视频队列。后台服务只监听 `127.0.0.1`，每次启动生成临时会话地址；已有幕织进程会被复用。宿主关闭后后台保留未完成任务，不重复提交付费请求。不会自动启动 Windows 服务或开机自启。
 
 - **Codex**：在源码目录运行 `codex plugin marketplace add ./release`，再运行 `codex plugin add muweave@muweave-local`。新对话可使用「幕织」插件，要求打开 Studio 或直接创建剧本、分镜、导入资产、查询任务及导出成片。支持 MCP Apps 的宿主可内嵌 Studio；其他界面使用 `studio-info` 返回的本机页面地址。
 - **iPolloWork**：设置 → 扩展 → 插件 → 添加，选择 `.ipollowork-plugin`。支持本地审批的版本会展示服务源代码、文件指纹和权限；审批后安装，从工作台入口打开「幕织 Studio」。旧版仅接受签名本地服务，会拒绝这个自用插件；本任务提供的宿主审批修改需一并运行。
@@ -94,6 +94,8 @@ AI 分镜导入时会按对白长度补足 10 秒以内的镜头时长。旧分�
 ## ChatGPT 账号连接
 
 在“连接与设置”连接一次 ChatGPT 账号。幕织使用随软件提供的 Codex 运行时，在应用内生成剧本、分镜及图片；图片完成后直接保存到发起生成的镜头或资产，无需复制、下载或再次登录浏览器。生成能力和次数以账号实际可用额度为准。
+
+资产库点击「生成参考图」即可直接生成并自动选中为当前参考图；旧版本保留。插件对话也可调用 `generateImage`（`slot: "reference"`），省略 `prompt` 时自动使用资产设定、项目风格和故事，不要求手工复制或导入。生图使用内置运行时的默认模型，避免继承电脑上不兼容的 Codex 模型配置；界面显示等待时间和实际错误，失败不会自动重新提交生成。
 
 这里使用 Codex 的 ChatGPT 账号授权，并非向任意第三方模型提供通用 OAuth。软件不读取或外传浏览器 Cookie、会话 Token 或账号密码。旧版浏览器辅助数据仅作兼容保留，不参与新的生图流程。
 
