@@ -8,9 +8,11 @@ Muweave is a local AI filmmaking workspace built with Electron, React, and TypeS
 
 Projects, media, and task records stay on your computer. AI generation connects to ChatGPT or RunningHub. The current runtime primarily targets **Windows x64**.
 
-![Muweave director workspace with the example project's shot list](docs/images/muweave-studio.png)
+![Muweave director workspace with the example project's shot list](./docs/images/muweave-studio.jpg?raw=true)
 
 _Application screenshot: the example project's director shot list in light mode, with the Chinese interface._
+
+[View the full screenshot](docs/images/muweave-studio.jpg)
 
 ## Contents
 
