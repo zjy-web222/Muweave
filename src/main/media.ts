@@ -9,6 +9,8 @@ import { Store, inside } from './store'
 import { projectSchema, type Asset, type Media, type Project } from '../shared/schema'
 import { escapeHtml, toSrt } from '../shared/director'
 
+export const episodeRenderVersion = 'muweave-watermark-v1'
+
 const extensions = {
   image: ['.png', '.jpg', '.jpeg', '.webp'],
   video: ['.mp4', '.webm', '.mov'],
@@ -366,6 +368,15 @@ export class Exporter {
       }
       if (shots.some((s) => !s.videoMediaId)) throw new Error('请为每个镜头选择视频后再导出 MP4')
       const { ffmpeg, ffprobe } = ffmpegBinaries(this.resourcesPath)
+      const watermark = this.resourcesPath
+        ? join(this.resourcesPath, 'muweave-mark.png')
+        : resolve(
+            dirname(fileURLToPath(import.meta.url)),
+            '../..',
+            'src/renderer/assets/muweave-mark.png',
+          )
+      if (!existsSync(watermark))
+        throw new Error('品牌水印素材缺失，请重新安装软件或恢复品牌素材。')
       await mkdir(store.file(p.id, 'exports'), { recursive: true })
       temp = await mkdtemp(store.file(p.id, 'exports/render-'))
       const [w, h] =
@@ -380,17 +391,21 @@ export class Exporter {
         const info = JSON.parse(
           await this.run(ffprobe, ['-v', 'error', '-show_streams', '-of', 'json', input], true),
         ) as { streams: { codec_type: string }[] }
+        const hasAudio = info.streams.some((stream) => stream.codec_type === 'audio')
+        const separateAudio = !!audio || !hasAudio
         const args = ['-hide_banner', '-y', '-i', input]
         if (audio) args.push('-i', store.file(p.id, audio.file))
-        else if (!info.streams.some((s) => s.codec_type === 'audio'))
-          args.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo')
+        else if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo')
+        args.push('-i', watermark)
         args.push(
+          '-filter_complex',
+          `[0:v:0]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,tpad=stop_mode=clone:stop_duration=${s.duration},drawbox=x=iw-128:y=ih-128:w=96:h=96:color=white@0.65:t=fill[base];` +
+            `[${separateAudio ? 2 : 1}:v:0]scale=96:96,format=rgba,colorchannelmixer=aa=0.88[mark];` +
+            '[base][mark]overlay=x=W-w-32:y=H-h-32:eof_action=repeat:repeatlast=1,format=yuv420p[branded]',
           '-map',
-          '0:v:0',
+          '[branded]',
           '-map',
-          audio || !info.streams.some((s) => s.codec_type === 'audio') ? '1:a:0' : '0:a:0',
-          '-vf',
-          `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,tpad=stop_mode=clone:stop_duration=${s.duration}`,
+          separateAudio ? '1:a:0' : '0:a:0',
           '-af',
           'apad',
           '-t',

@@ -609,6 +609,7 @@ export function ExportDialog({
             <span>
               <strong>{t('导出整集 MP4 + SRT')}</strong>
               <small>{t('按镜头顺序统一画幅、时长与音频')}</small>
+              <small>{t('右下角添加幕织品牌水印')}</small>
             </span>
           </Button>
           <Button

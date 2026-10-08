@@ -2,13 +2,15 @@
 
 [简体中文](README.md) | [English](README.en.md)
 
-![Muweave logo](src/renderer/assets/muweave-mark.png)
-
 **Weave your story. 织就你的故事。**
 
 Muweave is a local AI filmmaking workspace built with Electron, React, and TypeScript. Develop screenplays through conversation, maintain character and location assets, generate storyboard videos, and assemble an episode within one project. Run it as a desktop app or use its Studio page through plugins in Codex and iPolloWork.
 
 Projects, media, and task records stay on your computer. AI generation connects to ChatGPT or RunningHub. The current runtime primarily targets **Windows x64**.
+
+![Muweave director workspace with the example project's shot list](docs/images/muweave-studio.png)
+
+_Application screenshot: the example project's director shot list in light mode, with the Chinese interface._
 
 ## Contents
 
@@ -20,6 +22,7 @@ Projects, media, and task records stay on your computer. AI generation connects 
 - [Data and backups](#data-and-backups)
 - [Development and verification](#development-and-verification)
 - [Troubleshooting and limitations](#troubleshooting-and-limitations)
+- [License](#license)
 
 ## Features
 
@@ -121,6 +124,7 @@ Complete or cancel unfinished video tasks for that episode before changing its s
 ### Film output
 
 - MP4: H.264 + AAC at 30 fps, with 1920×1080, 1080×1920, or 1080×1080 output.
+- Final MP4 exports and episode previews include the Muweave brand mark in the lower-right corner with a safe margin. Original shot media remains unwatermarked.
 - Shots are assembled in order using their configured durations. Mismatched aspect ratios are fitted with padding; short videos hold the final frame, and long videos are trimmed.
 - Imported voice audio takes priority; otherwise the original video audio is retained. Missing audio is filled with silence.
 - Episode previews use the same pipeline as exports and regenerate their cache when video, audio, or duration changes.
@@ -265,3 +269,9 @@ Development rules are in [AGENTS.md](AGENTS.md). `node_modules/`, `dist/`, `rele
 Video downloads accept only allowed HTTPS RunningHub / xiaoyaoyou.com subdomains, up to 1 GB per file. Other CDNs, expired links, or unsupported formats require manual download and import; the Task ID is retained.
 
 Film assembly currently provides basic episode concatenation, without automatic TTS, lip synchronization, multitrack editing, transitions, or automatic music. Character, environment, first-frame, and dialogue accuracy require review. macOS packaging, account generation, and exports have not been verified on a physical machine.
+
+## License
+
+Muweave's original source code and documentation are licensed under the **[Apache License 2.0](LICENSE)**. Commercial use, modification, and redistribution are permitted subject to its license and notice requirements. See [NOTICE](NOTICE) for copyright and third-party information.
+
+Third-party components retain their respective licenses. FFmpeg / ffprobe in the Windows package use their accompanying GPL license and are not relicensed under Apache-2.0; build information and license files are in `resources/ffmpeg/`. Desktop distributions and plugin packages include Muweave's `LICENSE` and `NOTICE`.

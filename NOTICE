@@ -1,0 +1,10 @@
+Muweave 幕织
+Copyright 2026 Muweave contributors
+
+Muweave's original source code and documentation are licensed under the
+Apache License, Version 2.0. See LICENSE for the full terms.
+
+Third-party components retain their respective licenses. In particular,
+the bundled FFmpeg and ffprobe executables are not relicensed under
+Apache-2.0. Their license and build information accompany the Windows
+application in resources/ffmpeg/LICENSE and resources/ffmpeg/NOTICE.txt.

@@ -62,6 +62,8 @@ await put('service/muweave.mjs', await readFile('src/plugin/service/muweave.mjs'
 await put('service/runtime.json', json({ version, sourceRoot: root }))
 await put('skills/muweave/SKILL.md', await readFile('src/plugin/skills/muweave/SKILL.md'))
 await put('assets/muweave-mark.png', await readFile('src/renderer/assets/muweave-mark.png'))
+await put('LICENSE', await readFile('LICENSE'))
+await put('NOTICE', await readFile('NOTICE'))
 await put('README.md', `# 幕织 Studio ${version}\n\n此包支持 Codex 本地插件和 iPolloWork Workspace App。需要本机已构建的幕织 ${version} 或同版本安装版；复用原项目库、凭据和任务队列。不会附带项目、账号或 Key。\n\niPolloWork：设置 → 插件 → 导入 \\*.ipollowork-plugin，启用后打开幕织 Studio。\n\nCodex：在上一级目录运行 codex plugin marketplace add .，然后 codex plugin add muweave@muweave-local。新对话中使用幕织插件并要求打开 Studio。宿主不支持内嵌页面时，打开 studio-info 返回的本机地址。\n\n跨电脑：将 service/runtime.json 中 sourceRoot 改为目标机器的已构建源码位置，或删去 sourceRoot 并安装幕织；也可设置 MUWEAVE_HOME / MUWEAVE_EXECUTABLE。不复制浏览器会话或密钥。\n`)
 const archive = zipSync(files, { level: 6 })
 if (Object.values(files).reduce((sum, bytes) => sum + bytes.length, 0) > 10 * 1024 * 1024)

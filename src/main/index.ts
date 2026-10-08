@@ -39,7 +39,7 @@ import { ChatGPT } from './chatgpt'
 import { CodexText } from './codex'
 import { prepareChatFile } from './chat-files'
 import { Queue, RunningHub, assertCoinOnlyWorkflow, inputsChanged, relevantAssets } from './runninghub'
-import { activate, importMedia, exportArchive, restoreArchive, Exporter } from './media'
+import { activate, importMedia, exportArchive, restoreArchive, Exporter, episodeRenderVersion } from './media'
 import { startPluginServer, type CommandFiles } from './plugin'
 
 protocol.registerSchemesAsPrivileged([
@@ -710,6 +710,7 @@ if (primary)
             if (!shots.length || shots.some((shot) => !shot.videoMediaId))
               throw new Error('请先为当前集每个镜头准备视频')
             const revision = createHash('sha256').update(JSON.stringify({
+              renderer: episodeRenderVersion,
               aspect: p.aspect,
               shots: shots.map((shot) => [shot.id, shot.videoMediaId, shot.audioMediaId, shot.duration]),
             })).digest('hex').slice(0, 16)

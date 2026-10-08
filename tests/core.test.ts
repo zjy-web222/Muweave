@@ -375,7 +375,7 @@ describe('local project state', () => {
       ['-v', 'error', '-y', '-i', video, '-i', audio, '-c:v', 'copy', '-c:a', 'aac', withAudio],
       { windowsHide: true },
     )
-    await importMedia(store, p.id, p.shots[0].id, 'video', video)
+    const firstVideo = await importMedia(store, p.id, p.shots[0].id, 'video', video)
     await importMedia(store, p.id, p.shots[0].id, 'audio', audio)
     await importMedia(store, p.id, p.shots[1].id, 'video', withAudio)
     await importMedia(store, p.id, p.shots[2].id, 'video', video)
@@ -398,9 +398,109 @@ describe('local project state', () => {
     expect(await readFile(join(root, 'episode.srt'), 'utf8')).toContain(
       '00:00:01,000 --> 00:00:02,000',
     )
+    // Decode the actual exported pixels: the mark must survive every shot and audio branch.
+    const pixels = (time: number, crop: string) =>
+      execFileSync(
+        'ffmpeg',
+        [
+          '-v',
+          'error',
+          '-ss',
+          String(time),
+          '-i',
+          target,
+          '-vf',
+          crop,
+          '-frames:v',
+          '1',
+          '-pix_fmt',
+          'rgb24',
+          '-f',
+          'rawvideo',
+          'pipe:1',
+        ],
+        { windowsHide: true },
+      )
+    const plain = pixels(0.5, 'crop=96:96:32:ih-128')
+    for (const time of [0.5, 1.5, 2.5]) {
+      const marked = pixels(time, 'crop=96:96:iw-128:ih-128')
+      expect(marked.length).toBe(96 * 96 * 3)
+      expect(
+        marked.filter((value, index) => Math.abs(value - plain[index]) > 20).length,
+      ).toBeGreaterThan(marked.length / 2)
+      const red = marked.filter((_, index) => index % 3 === 0)
+      expect(Math.max(...red) - Math.min(...red)).toBeGreaterThan(50)
+    }
+    const sourceAfterExport = await readFile(store.file(p.id, firstVideo.file))
+    expect(sourceAfterExport).toEqual(await readFile(video))
     await exporter.episode(store, p.id, p.episodes[0].id, 'html', join(root, 'board.html'))
     expect(await readFile(join(root, 'board.html'), 'utf8')).toContain('导演分镜表')
   }, 60000)
+  it.each(['9:16', '1:1'] as const)(
+    'exports a lower-right watermark for %s',
+    async (aspect) => {
+      const p = createProject('watermark', aspect, true)
+      p.shots = p.shots.slice(0, 1).map((shot) => ({ ...shot, duration: 1 }))
+      store.save(p)
+      const video = join(root, 'plain.mp4'),
+        target = join(root, 'marked.mp4')
+      execFileSync(
+        'ffmpeg',
+        [
+          '-v',
+          'error',
+          '-y',
+          '-f',
+          'lavfi',
+          '-i',
+          'color=c=black:s=160x160:r=30',
+          '-t',
+          '0.5',
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
+          video,
+        ],
+        { windowsHide: true },
+      )
+      await importMedia(store, p.id, p.shots[0].id, 'video', video)
+      await new Exporter().episode(store, p.id, p.episodes[0].id, 'mp4', target)
+      // The final padded frame still carries the watermark, with a clear right/bottom margin.
+      const pixels = execFileSync(
+        'ffmpeg',
+        [
+          '-v',
+          'error',
+          '-ss',
+          '0.8',
+          '-i',
+          target,
+          '-vf',
+          'crop=128:128:iw-128:ih-128',
+          '-frames:v',
+          '1',
+          '-pix_fmt',
+          'rgb24',
+          '-f',
+          'rawvideo',
+          'pipe:1',
+        ],
+        { windowsHide: true },
+      )
+      const mark: number[] = [],
+        margin: number[] = []
+      for (let y = 0; y < 128; y++)
+        for (let x = 0; x < 128; x++) {
+          const value = pixels[(y * 128 + x) * 3]
+          if (x < 96 && y < 96) mark.push(value)
+          else if (x > 110 || y > 110) margin.push(value)
+        }
+      expect(Math.max(...mark) - Math.min(...mark)).toBeGreaterThan(50)
+      expect(Math.max(...margin)).toBeLessThan(10)
+    },
+    60000,
+  )
 })
 function makeJob(status: Job['status'] = 'queued'): Job {
   const p = store.save(createProject('queue', '16:9', true)),

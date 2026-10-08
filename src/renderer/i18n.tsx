@@ -277,6 +277,9 @@ export const en: Record<string, string> = {
   '镜头视频已就绪 ·': 'shot videos ready ·',
   '秒 ·': 'sec ·',
   '导出整集 MP4 + SRT': 'Export episode MP4 + SRT',
+  '右下角添加幕织品牌水印': 'Includes the Muweave watermark in the bottom-right corner',
+  '品牌水印素材缺失，请重新安装软件或恢复品牌素材。':
+    'The brand watermark asset is missing. Reinstall Muweave or restore the brand asset.',
   '按镜头顺序统一画幅、时长与音频':
     'Combine shots in order with consistent framing, timing, and audio',
   '字幕文件 SRT': 'Subtitle file SRT',
