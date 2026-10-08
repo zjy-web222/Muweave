@@ -1,0 +1,511 @@
+From 41fe464fb8990708ed61d0119984c7404bccbde1 Mon Sep 17 00:00:00 2001
+From: "jianyu.zhang" <3193941960@qq.com>
+Date: Thu, 8 Oct 2026 13:37:04 +0800
+Subject: [PATCH] Add explicit fingerprint review for local service plugins
+
+---
+ apps/app/src/app/lib/ipollowork-server.ts     |  11 +-
+ apps/app/src/i18n/locales/en.ts               |   4 +
+ apps/app/src/i18n/locales/zh.ts               |   4 +
+ .../settings/plugin-package-import-modal.tsx  |  37 ++++++-
+ .../src/plugin-package-lifecycle.test.ts      |  44 ++++++++
+ apps/server/src/plugin-package-lifecycle.ts   |  29 +++++
+ apps/server/src/plugin-package-upload.ts      |   1 +
+ apps/server/src/server.ts                     |  13 ++-
+ docs/plugin-packages.md                       |   2 +
+ evals/flows/muweave-plugin-review.flow.mjs    | 104 ++++++++++++++++++
+ evals/voiceovers/muweave-plugin-review.md     |   9 ++
+ 11 files changed, 247 insertions(+), 11 deletions(-)
+ create mode 100644 evals/flows/muweave-plugin-review.flow.mjs
+ create mode 100644 evals/voiceovers/muweave-plugin-review.md
+
+diff --git a/apps/app/src/app/lib/ipollowork-server.ts b/apps/app/src/app/lib/ipollowork-server.ts
+index c2c939e2d..ac7e3abed 100644
+--- a/apps/app/src/app/lib/ipollowork-server.ts
++++ b/apps/app/src/app/lib/ipollowork-server.ts
+@@ -322,6 +322,13 @@ export type iPolloWorkPluginPackageImportPreview = iPolloWorkPluginPackagePrevie
+ };
+ 
+ export type iPolloWorkPluginPackageImportSafety =
++  | {
++      level: "local-review";
++      localCode: boolean;
++      status: "required" | "approved";
++      sha256: string;
++      allowedResourceTypes: iPolloWorkExtensionManifest["resources"][number]["type"][];
++    }
+   | {
+       level: "declarative";
+       localCode: false;
+@@ -1728,7 +1735,7 @@ export function createiPolloWorkServerClient(options: { baseUrl: string; token?:
+     importPluginPackage: (
+       workspaceId: string,
+       upload: iPolloWorkPluginPackageUpload,
+-      options?: { allowDowngrade?: boolean },
++      options?: { allowDowngrade?: boolean; localReviewSha256?: string },
+     ) =>
+       requestJson<{
+         result: { status: "installed" | "updated" | "unchanged"; pluginId: string; version: string; previousVersion?: string };
+@@ -1738,7 +1745,7 @@ export function createiPolloWorkServerClient(options: { baseUrl: string; token?:
+         token,
+         hostToken,
+         method: "POST",
+-        body: upload,
++        body: { ...upload, ...(options?.localReviewSha256 ? { localReviewSha256: options.localReviewSha256 } : {}) },
+         timeoutMs: timeouts.binary,
+       }),
+     installPluginPackage: (workspaceId: string, packageRoot: string) =>
+diff --git a/apps/app/src/i18n/locales/en.ts b/apps/app/src/i18n/locales/en.ts
+index e44275585..e1e0eb136 100644
+--- a/apps/app/src/i18n/locales/en.ts
++++ b/apps/app/src/i18n/locales/en.ts
+@@ -269,6 +269,10 @@ export default {
+   "plugin_platform.import_safety": "Declarative safety check passed: no local service, system process, native binary, or host-process code will be loaded.",
+   "plugin_platform.import_signed_safety": "The publisher signature from {publisher} is verified. This plugin contains local code and will run the local services declared in its manifest.",
+   "plugin_platform.import_permissions": "Permissions granted after installation",
++  "plugin_platform.import_local_review_title": "Review this local plugin",
++  "plugin_platform.import_local_review_warning": "This plugin has no official signature. Its local service can run code on your computer. Check its source, code and permissions.",
++  "plugin_platform.import_local_review_confirm": "I reviewed the code and permissions and approve installing the local plugin with this file fingerprint",
++  "plugin_platform.import_local_review_source_unavailable": "Inspect this file in the original plugin package.",
+   "plugin_platform.import_error": "Could not import this plugin package.",
+   "plugin_platform.import_downgrade_title": "Replace with an older version?",
+   "plugin_platform.import_downgrade_description": "Version {currentVersion} is currently installed. Importing version {incomingVersion} will replace it with an older version. You can switch back later only if that version is still available.",
+diff --git a/apps/app/src/i18n/locales/zh.ts b/apps/app/src/i18n/locales/zh.ts
+index 6aa01186c..9b8df605c 100644
+--- a/apps/app/src/i18n/locales/zh.ts
++++ b/apps/app/src/i18n/locales/zh.ts
+@@ -272,6 +272,10 @@ export default {
+   "plugin_platform.import_safety": "已通过声明式安全检查：不会加载本地服务、系统进程、原生程序或主进程代码。",
+   "plugin_platform.import_signed_safety": "已验证{publisher}的发布者签名。这个插件包含本地代码，安装后会运行清单中声明的本地服务。",
+   "plugin_platform.import_permissions": "安装后将获得以下权限",
++  "plugin_platform.import_local_review_title": "审批此本地插件",
++  "plugin_platform.import_local_review_warning": "此插件未经官方签名。本地服务可在你的电脑上运行代码；请核对来源、代码与权限。",
++  "plugin_platform.import_local_review_confirm": "我已检查此包的代码与权限，同意安装这个文件指纹对应的本地插件",
++  "plugin_platform.import_local_review_source_unavailable": "请在原始插件包中检查此文件。",
+   "plugin_platform.import_error": "无法导入这个插件包。",
+   "plugin_platform.import_downgrade_title": "要覆盖为较低版本吗？",
+   "plugin_platform.import_downgrade_description": "当前已安装版本 {currentVersion}。导入版本 {incomingVersion} 会用较低版本覆盖当前插件；只有该版本仍然可用时才能再次切换回来。",
+diff --git a/apps/app/src/react-app/domains/settings/plugin-package-import-modal.tsx b/apps/app/src/react-app/domains/settings/plugin-package-import-modal.tsx
+index 3936079d1..8b70a86bc 100644
+--- a/apps/app/src/react-app/domains/settings/plugin-package-import-modal.tsx
++++ b/apps/app/src/react-app/domains/settings/plugin-package-import-modal.tsx
+@@ -5,6 +5,7 @@ import { PLUGIN_INSTALL_PACKAGE_EXTENSION } from "@ipollowork/types/plugins";
+ 
+ import { Button } from "@/components/ui/button";
+ import { Input } from "@/components/ui/input";
++import { Checkbox } from "@/components/ui/checkbox";
+ import { toast } from "@/components/ui/sonner";
+ import {
+   Dialog,
+@@ -47,6 +48,7 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+   const [busy, setBusy] = useState<"preview" | "install" | null>(null);
+   const [error, setError] = useState<string | null>(null);
+   const [downgradeConfirmationOpen, setDowngradeConfirmationOpen] = useState(false);
++  const [localReviewApproved, setLocalReviewApproved] = useState(false);
+ 
+   const counts = useMemo(() => ({
+     skills: preview?.manifest.resources.filter((resource) => resource.type === "skill").length ?? 0,
+@@ -64,6 +66,7 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+     setBusy(null);
+     setError(null);
+     setDowngradeConfirmationOpen(false);
++    setLocalReviewApproved(false);
+     if (inputRef.current) inputRef.current.value = "";
+   };
+ 
+@@ -78,6 +81,7 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+     setBusy("preview");
+     setError(null);
+     setPreview(null);
++    setLocalReviewApproved(false);
+     try {
+       const nextUpload = await readPluginPackageArchive(
+         file,
+@@ -124,12 +128,14 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+ 
+   const install = async (allowDowngrade = false) => {
+     if (!preview || (source === "file" ? !upload : !previewedGithubUrl)) return;
++    if (preview.safety.level === "local-review" && !localReviewApproved) return;
+     const operation = ++operationRef.current;
+     setBusy("install");
+     setError(null);
+     try {
+       const response = source === "file" && upload
+-        ? await props.client.importPluginPackage(props.workspaceId, upload, { allowDowngrade })
++        ? await props.client.importPluginPackage(props.workspaceId, upload, { allowDowngrade,
++            ...(preview.safety.level === "local-review" ? { localReviewSha256: preview.safety.sha256 } : {}) })
+         : previewedGithubUrl
+           ? await props.client.importGithubPluginPackage(
+               props.workspaceId,
+@@ -156,6 +162,7 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+   const isDowngrade = preview?.versionChange === "downgrade";
+   const previewManifest = preview ? localizePluginPackageManifest(preview.manifest, locale) : null;
+   const signedSafety = preview?.safety.level === "signed" ? preview.safety : null;
++  const localSafety = preview?.safety.level === "local-review" ? preview.safety : null;
+ 
+   return (
+     <>
+@@ -258,15 +265,15 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+                   </div>
+                 ))}
+               </div>
+-              <div className={`flex items-start gap-2 border-t px-4 py-3 text-xs leading-5 ${signedSafety ? "border-amber-6 bg-amber-2 text-amber-11" : "border-green-6 bg-green-2 text-green-11"}`}>
++              <div className={`flex items-start gap-2 border-t px-4 py-3 text-xs leading-5 ${signedSafety || localSafety ? "border-amber-6 bg-amber-2 text-amber-11" : "border-green-6 bg-green-2 text-green-11"}`}>
+                 <ShieldCheck size={16} className="mt-0.5 shrink-0" />
+                 <span>
+-                  {signedSafety
++                  {localSafety ? t("plugin_platform.import_local_review_warning") : signedSafety
+                     ? t("plugin_platform.import_signed_safety", { publisher: signedSafety.publisher.name })
+                     : t("plugin_platform.import_safety")}
+                 </span>
+               </div>
+-              {signedSafety && previewManifest.permissions?.length ? (
++              {(signedSafety || localSafety) && previewManifest.permissions?.length ? (
+                 <div className="border-t border-dls-border px-4 py-3">
+                   <p className="text-xs font-medium text-dls-text">{t("plugin_platform.import_permissions")}</p>
+                   <ul className="mt-2 space-y-1.5 text-xs leading-5 text-dls-secondary">
+@@ -274,6 +281,26 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+                   </ul>
+                 </div>
+               ) : null}
++              {localSafety ? <div className="space-y-3 border-t border-dls-border px-4 py-3">
++                <p className="text-xs font-medium">{t("plugin_platform.import_local_review_title")}</p>
++                <code className="block break-all text-[10px] text-dls-secondary" data-testid="plugin-local-review-fingerprint">SHA-256: {localSafety.sha256}</code>
++                <ul className="space-y-1 text-xs text-dls-secondary">
++                  {preview.files.map(file => <li key={file.path} className="break-all">{file.path}</li>)}
++                </ul>
++                {previewManifest.resources.filter(resource => resource.type === "local-service" && resource.path).map(resource => {
++                  const file = upload?.files.find(file => file.path === resource.path);
++                  const code = file ? new TextDecoder().decode(Uint8Array.from(atob(file.contentBase64), char => char.charCodeAt(0))) : null;
++                  return <details key={resource.id} className="text-xs">
++                    <summary className="cursor-pointer">{resource.path}</summary>
++                    <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-dls-hover p-3 text-[10px]">{code?.slice(0, 65536) ?? t("plugin_platform.import_local_review_source_unavailable")}</pre>
++                  </details>;
++                })}
++                <label className="flex items-start gap-2 text-xs leading-5">
++                  <Checkbox checked={localReviewApproved} onCheckedChange={checked => setLocalReviewApproved(checked === true)}
++                    disabled={busy !== null} aria-label={t("plugin_platform.import_local_review_confirm")} />
++                  <span>{t("plugin_platform.import_local_review_confirm")}</span>
++                </label>
++              </div> : null}
+             </div>
+           ) : null}
+ 
+@@ -290,7 +317,7 @@ export function PluginPackageImportModal(props: PluginPackageImportModalProps) {
+             {t("common.cancel")}
+           </DialogClose>
+           <Button
+-            disabled={!preview || busy !== null}
++            disabled={!preview || busy !== null || Boolean(localSafety && !localReviewApproved)}
+             onClick={() => {
+               if (isDowngrade) {
+                 setDowngradeConfirmationOpen(true);
+diff --git a/apps/server/src/plugin-package-lifecycle.test.ts b/apps/server/src/plugin-package-lifecycle.test.ts
+index 18b3258df..6e241bfbb 100644
+--- a/apps/server/src/plugin-package-lifecycle.test.ts
++++ b/apps/server/src/plugin-package-lifecycle.test.ts
+@@ -1631,6 +1631,50 @@ describe("plugin package lifecycle", () => {
+     });
+   });
+ 
++  test("local host review binds executable plugin installation to the exact package fingerprint", async () => {
++    const lifecycle = await import("./plugin-package-lifecycle.js");
++    const workspaceRoot = await createRoot("ipollowork-plugin-local-review-");
++    const packageRoot = join(workspaceRoot, "package");
++    process.env.IPOLLOWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
++    await writeDeclarativePackage(packageRoot);
++    const manifestPath = join(packageRoot, "ipollowork.plugin.json");
++    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
++    manifest.permissions = [{ id: "process", reason: "Start the reviewed local service" }];
++    manifest.resources.push({ type: "local-service", id: "service", path: "service/local.mjs",
++      provides: ["action:ping"], actions: [{ id: "ping", title: "Ping", description: "Read the local service status", effect: "read", inputSchema: { type: "object" } }] });
++    await mkdir(join(packageRoot, "service"), { recursive: true });
++    await writeFile(join(packageRoot, "service/local.mjs"), "export default async () => ({actions:{ping:async()=>({pong:true})}})");
++    await writeFile(manifestPath, JSON.stringify(manifest));
++    const preview = await lifecycle.previewPluginPackage({ packageRoot, engineId: ENGINE_ID });
++    const files = await Promise.all([...new Set(["ipollowork.plugin.json", ...preview.files.map(file => file.path)])].map(async path => ({
++      path, contentBase64: (await readFile(join(packageRoot, path))).toString("base64"),
++    })));
++    const upload = { archiveName: "local.ipollowork-plugin", files };
++    const server = await startServer(serverConfig(workspaceRoot));
++    const base = `http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/plugin-packages/import`;
++    const headers = { authorization: "Bearer token", "content-type": "application/json" };
++    const hostHeaders = { ...headers, "x-ipollowork-host-token": "host-token" };
++    const request = (url: string, body: unknown, authenticatedHost = false) => fetch(url, {
++      method: "POST", headers: authenticatedHost ? hostHeaders : headers, body: JSON.stringify(body),
++    });
++    try {
++      expect((await request(`${base}/validate`, upload)).status).toBe(400);
++      const reviewed = await request(`${base}/validate`, upload, true);
++      expect(reviewed.status).toBe(200);
++      const result = await reviewed.json();
++      expect(result.preview.safety).toMatchObject({ level: "local-review", status: "required", sha256: preview.integrity.sha256 });
++      expect((await request(base, upload, true)).status).toBe(400);
++      expect((await request(base, { ...upload, localReviewSha256: preview.integrity.sha256 })).status).toBe(403);
++      expect((await request(base, { ...upload, localReviewSha256: "0".repeat(64) }, true)).status).toBe(409);
++      const approved = await request(base, { ...upload, localReviewSha256: preview.integrity.sha256 }, true);
++      expect(approved.status).toBe(200);
++      expect(await approved.json()).toMatchObject({ result: { status: "installed" }, safety: { level: "local-review", status: "approved" } });
++      const changedFiles = files.map(file => file.path === "service/local.mjs"
++        ? { ...file, contentBase64: Buffer.from("export default async () => ({actions:{}})").toString("base64") } : file);
++      expect((await request(base, { ...upload, files: changedFiles, localReviewSha256: preview.integrity.sha256 }, true)).status).toBe(409);
++    } finally { await server.stop(); }
++  });
++
+   test("rejects executable packages from the public developer import API", async () => {
+     const workspaceRoot = await createRoot("ipollowork-plugin-api-");
+     const packageRoot = join(workspaceRoot, "packages", "acme-research");
+diff --git a/apps/server/src/plugin-package-lifecycle.ts b/apps/server/src/plugin-package-lifecycle.ts
+index 2ecc5e3fb..967f1d41c 100644
+--- a/apps/server/src/plugin-package-lifecycle.ts
++++ b/apps/server/src/plugin-package-lifecycle.ts
+@@ -145,6 +145,13 @@ export type PluginPackagePreview = {
+ type PluginPackageResourceType = PluginPackageManifest["resources"][number]["type"];
+ 
+ export type PluginPackageImportSafety =
++  | {
++      level: "local-review";
++      localCode: boolean;
++      status: "required" | "approved";
++      sha256: string;
++      allowedResourceTypes: PluginPackageResourceType[];
++    }
+   | {
+       level: "declarative";
+       localCode: false;
+@@ -1179,6 +1186,8 @@ export async function assertPluginPackageSafeForImport(input: {
+   packageRoot: string;
+   preview: PluginPackagePreview;
+   purpose: PluginPackageImportPurpose;
++  previewLocalReview?: boolean;
++  localReviewSha256?: string;
+ }): Promise<PluginPackageImportSafety> {
+   const { manifest } = input.preview;
+   const reasons: string[] = [];
+@@ -1187,6 +1196,26 @@ export async function assertPluginPackageSafeForImport(input: {
+     const signedSafety = signedImportSafety(manifest, input.preview.integrity);
+     if (signedSafety) return signedSafety;
+   }
++  // Only the authenticated local host can request this path at the upload API.
++  // Approval belongs to these exact bytes, never to an ID or publisher name.
++  if (!manifest.source.trusted && input.purpose === "install"
++      && (input.previewLocalReview || input.localReviewSha256 !== undefined)) {
++    const reviewedTypes = new Set([...SAFE_IMPORT_RESOURCE_TYPES, "local-service"]);
++    const reviewedPermissions = new Set(["network", "workspace-read", "workspace-write", "process", "clipboard", "notifications"]);
++    const unsupported = Boolean(manifest.engineBindings?.length || manifest.authorization?.methods.length)
++      || manifest.resources.some((resource) => !reviewedTypes.has(resource.type))
++      || manifest.permissions?.some((permission) => !reviewedPermissions.has(permission.id));
++    if (unsupported) throw new ApiError(400, "plugin_package_import_unsafe", "Local review does not allow engine bindings, native binaries, authorization forms, or device permissions");
++    const needsReview = hasExecutableCapabilities(manifest) || Boolean(manifest.permissions?.length)
++      || manifest.resources.some((resource) => resource.path && !safeImportResourcePath(resource.type, resource.path));
++    if (needsReview) {
++      if (input.localReviewSha256 !== undefined && input.localReviewSha256 !== input.preview.integrity.sha256)
++        throw new ApiError(409, "plugin_package_review_changed", "The package changed after review. Preview it and approve the new fingerprint.");
++      return { level: "local-review", localCode: hasExecutableCapabilities(manifest),
++        status: input.localReviewSha256 ? "approved" : "required", sha256: input.preview.integrity.sha256,
++        allowedResourceTypes: [...new Set(manifest.resources.map((resource) => resource.type))] };
++    }
++  }
+   if (hasExecutableCapabilities(manifest)) {
+     reasons.push("Imported packages cannot include executable capabilities");
+   }
+diff --git a/apps/server/src/plugin-package-upload.ts b/apps/server/src/plugin-package-upload.ts
+index 04b034e0a..9746f1cb7 100644
+--- a/apps/server/src/plugin-package-upload.ts
++++ b/apps/server/src/plugin-package-upload.ts
+@@ -14,6 +14,7 @@ const MAX_PLUGIN_PACKAGE_BYTES = 10 * 1024 * 1024;
+ 
+ const uploadSchema = z.object({
+   archiveName: z.string().trim().min(1).max(255),
++  localReviewSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+   files: z.array(z.object({
+     path: z.string().min(1).max(512),
+     contentBase64: z.string(),
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index bf9d02649..c747e55ad 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -2148,7 +2148,8 @@ function createRoutes(
+     const body = await readPluginPackageUploadBody(ctx.request);
+     return withMaterializedPluginPackageUpload(body, "install", async ({ packageRoot }) => {
+       const preview = await previewPluginPackage({ packageRoot, engineId: workspace.engineId ?? DEFAULT_ENGINE_ID });
+-      const safety = await assertPluginPackageSafeForImport({ packageRoot, preview, purpose: "install" });
++      const safety = await assertPluginPackageSafeForImport({ packageRoot, preview, purpose: "install",
++        previewLocalReview: Boolean(config.hostToken && ctx.request.headers.get("x-ipollowork-host-token") === config.hostToken) });
+       const incomingVersion = preview.manifest.package?.version;
+       if (!incomingVersion) {
+         throw new ApiError(400, "plugin_package_metadata_required", "Package metadata is required for installation");
+@@ -2174,9 +2175,13 @@ function createRoutes(
+     requireClientScope(ctx, "collaborator");
+     const workspace = await resolveWorkspace(config, ctx.params.id);
+     const body = await readPluginPackageUploadBody(ctx.request);
++    const reviewSha256 = ensurePlainObject(body).localReviewSha256;
++    if (reviewSha256 !== undefined && (!config.hostToken || ctx.request.headers.get("x-ipollowork-host-token") !== config.hostToken || typeof reviewSha256 !== "string" || !/^[a-f0-9]{64}$/.test(reviewSha256)))
++      throw new ApiError(403, "plugin_package_local_review_forbidden", "Local plugin approval requires the authenticated desktop host and a valid package fingerprint");
+     return withMaterializedPluginPackageUpload(body, "install", async ({ archiveName, packageRoot }) => {
+       const preview = await previewPluginPackage({ packageRoot, engineId: workspace.engineId ?? DEFAULT_ENGINE_ID });
+-      const safety = await assertPluginPackageSafeForImport({ packageRoot, preview, purpose: "install" });
++      const safety = await assertPluginPackageSafeForImport({ packageRoot, preview, purpose: "install",
++        ...(typeof reviewSha256 === "string" ? { localReviewSha256: reviewSha256 } : {}) });
+       const current = (await listInstalledPluginPackages({ serverConfig: config }))
+         .find((item) => item.pluginId === preview.manifest.id);
+       const incomingVersion = preview.manifest.package?.version;
+@@ -2198,7 +2203,7 @@ function createRoutes(
+       await requireApproval(ctx, {
+         workspaceId: workspace.id,
+         action: "plugin_packages.install",
+-        summary: `Import declarative plugin package ${preview.manifest.name}`,
++        summary: `Import plugin package ${preview.manifest.name}${safety.level === "local-review" ? ` after local review (${safety.sha256})` : ""}`,
+         paths: pluginProjectionRoots(config),
+       });
+       const result = current && current.version !== preview.manifest.package?.version
+@@ -2212,7 +2217,7 @@ function createRoutes(
+         actor: ctx.actor ?? { type: "remote" },
+         action: "plugin_packages.import",
+         target: archiveName,
+-        summary: `Imported declarative plugin package ${preview.manifest.name} ${preview.manifest.package?.version ?? ""}`.trim(),
++        summary: `Imported plugin package ${preview.manifest.name} ${preview.manifest.package?.version ?? ""}${safety.level === "local-review" ? ` after local approval of SHA-256 ${safety.sha256}` : ""}`.trim(),
+         timestamp: Date.now(),
+       });
+       emitPluginReloadEvents(ctx.reloadEvents, config, "plugins", {
+diff --git a/docs/plugin-packages.md b/docs/plugin-packages.md
+index 4037c2166..337650eaf 100644
+--- a/docs/plugin-packages.md
++++ b/docs/plugin-packages.md
+@@ -19,6 +19,8 @@ The host's generic launcher proof accepts `IPOLLOWORK_EVAL_WORKBENCHES` as a JSO
+ 
+ ## Package layout
+ 
++Local desktop imports can request review for unsigned packages with local services. The import dialog shows owned files, service source, permissions, and a SHA-256 fingerprint. Installation requires checking the review checkbox and resending that exact fingerprint through the authenticated desktop host. Remote clients, GitHub imports, and unapproved packages retain the declarative-only restrictions. Changed bytes invalidate approval. Local review does not permit engine bindings, native binaries, authorization forms, or device permissions and does not mark the publisher as officially signed.
++
+ Every unpacked package starts with `ipollowork.plugin.json`. Resource paths are relative to that directory and may not escape it.
+ 
+ ```text
+diff --git a/evals/flows/muweave-plugin-review.flow.mjs b/evals/flows/muweave-plugin-review.flow.mjs
+new file mode 100644
+index 000000000..55518940a
+--- /dev/null
++++ b/evals/flows/muweave-plugin-review.flow.mjs
+@@ -0,0 +1,104 @@
++import { resolve } from 'node:path';
++import { loadVoiceoverParagraphs } from '../runner/voiceover.mjs';
++
++const vo = await loadVoiceoverParagraphs('muweave-plugin-review');
++const button = label => `([...document.querySelectorAll('button')].find(b => b.textContent?.trim() === ${JSON.stringify(label)}))`;
++const checkbox = `document.querySelector('[role="checkbox"][aria-label="我已检查此包的代码与权限，同意安装这个文件指纹对应的本地插件"]')`;
++const install = `([...document.querySelectorAll('[role="dialog"] button')].find(b => ['安装插件', '更新'].includes(b.textContent?.trim())))`;
++let workspaceId;
++
++export default {
++  id: 'muweave-plugin-review', title: '明确审批本地插件后在 iPolloWork 打开幕织 Studio', kind: 'user-facing', preserveTheme: true,
++  requiredEnv: ['IPOLLOWORK_EVAL_MUWEAVE_PACKAGE'],
++  steps: [
++    { name: '未审批的可执行插件无法安装', async run(ctx) {
++      await ctx.prove('幕织展示文件指纹与本地服务审批，安装按钮默认禁用', {
++        voiceover: vo[0],
++        action: async () => {
++          await ctx.waitFor('Boolean(window.__ipolloworkControl)');
++          await ctx.eval(`document.querySelector('[role="dialog"]') && ${button('取消')}?.click()`);
++          await ctx.waitFor('!document.querySelector(\'[role="dialog"]\')');
++          workspaceId = await ctx.eval('location.hash.split("/")[2]');
++          ctx.assert(workspaceId?.startsWith('ws_'), 'A local workspace is required.');
++          await ctx.navigateHash(`/workspace/${workspaceId}/settings/extensions`);
++          await ctx.waitFor('window.__ipolloworkControl.snapshot().route.endsWith("/settings/extensions")');
++          await ctx.waitFor(`(() => {
++            const input = document.querySelector('input[type="file"][accept*=".ipollowork-plugin"]');
++            if (input) return true;
++            ${button('添加')}?.click();
++            return false;
++          })()`);
++          const { root } = await ctx.client.send('DOM.getDocument', { depth: 1, pierce: true });
++          const { nodeId } = await ctx.client.send('DOM.querySelector', { nodeId: root.nodeId,
++            selector: 'input[type="file"][accept*=".ipollowork-plugin"]' });
++          await ctx.client.send('DOM.setFileInputFiles', { nodeId, files: [resolve(process.env.IPOLLOWORK_EVAL_MUWEAVE_PACKAGE)] });
++          await ctx.waitFor('Boolean(document.querySelector(\'[data-testid="plugin-local-review-fingerprint"]\'))', { timeoutMs: 60000 });
++          await ctx.eval(`${checkbox}.scrollIntoView({block:"center"})`);
++        },
++        assert: async () => {
++          ctx.assert(await ctx.eval(`${checkbox}?.getAttribute('aria-checked') === 'false'`), 'Review must start unchecked.');
++          ctx.assert(await ctx.eval(`${install}?.disabled === true`), 'Unapproved installation must be disabled.');
++          ctx.assert(await ctx.eval('document.body.innerText.includes("service/muweave.mjs")'), 'Service source must be available.');
++          ctx.assert(await ctx.eval('/SHA-256: [a-f0-9]{64}/.test(document.body.innerText)'), 'Exact package fingerprint must be shown.');
++        },
++        screenshot: { name: 'approval-required', requireText: ['SHA-256:', '审批此本地插件', 'service/muweave.mjs'] },
++      });
++    } },
++    { name: '明确审批安装对应的插件包', async run(ctx) {
++      await ctx.prove('审批后真实安装幕织插件', {
++        voiceover: vo[1],
++        action: async () => {
++          await ctx.eval(`${checkbox}.click()`);
++          await ctx.waitFor(`${install}?.disabled === false`);
++          await ctx.eval(`${install}.click()`);
++          await ctx.waitFor('!document.querySelector(\'[role="dialog"]\')', { timeoutMs: 60000 });
++          await ctx.waitFor('document.body.innerText.includes("幕织 Studio")', { timeoutMs: 60000 });
++        },
++        assert: async () => {
++          const installed = await ctx.eval(`(async () => {
++            const info = await window.__IPOLLOWORK_ELECTRON__.invokeDesktop('ipolloworkServerInfo');
++            const response = await fetch(info.baseUrl + '/workspace/' + ${JSON.stringify(workspaceId)} + '/plugin-packages', {
++              headers: { authorization: 'Bearer ' + (info.ownerToken || info.clientToken), 'X-iPolloWork-Host-Token': info.hostToken },
++            });
++            if (!response.ok) throw Error('Installed catalog HTTP ' + response.status);
++            const item = (await response.json()).items.find(item => item.pluginId === 'muweave');
++            return { installed: Boolean(item), version: item?.version, enabled: item?.enabled };
++          })()`, { awaitPromise: true });
++          ctx.assert(installed.installed && /^0\.2\.\d+$/.test(installed.version) && installed.enabled !== false, 'Approved package must be installed and enabled.');
++        },
++        screenshot: { name: 'approved-installed', requireText: ['幕织 Studio', '已安装'] },
++      });
++    } },
++    { name: '使用真实嵌入 Studio', async run(ctx) {
++      await ctx.navigateHash(`/workspace/${workspaceId}/session`);
++      await ctx.waitFor('window.__ipolloworkControl.listActions().some(a => a.id === "session.create_task" && !a.disabled)');
++      await ctx.control('session.create_task');
++      const launcher = `document.querySelector('[aria-label="添加侧面板入口"]')`;
++      const entry = `document.querySelector('[data-testid="side-panel-launcher-workspace-app:muweave:workspace-app:studio"]')`;
++      const frame = `document.querySelector('iframe[title="幕织 Studio"]')`;
++      await ctx.waitFor(`Boolean(${launcher}) || Boolean(document.querySelector('[aria-label="打开右侧面板"]'))`);
++      await ctx.eval(`document.querySelector('[aria-label="打开右侧面板"]')?.click()`);
++      await ctx.waitFor(`Boolean(${launcher})`, { timeoutMs: 60000 });
++      await ctx.eval(`${launcher}.click()`);
++      await ctx.waitFor(`Boolean(${entry})`);
++      await ctx.eval(`${entry}.click()`);
++      await ctx.waitFor(`Boolean(${frame}?.contentDocument?.querySelector('.app-shell'))`, { timeoutMs: 60000 });
++      await ctx.eval(`${frame}.contentDocument.querySelector('[aria-label="项目导航"]')?.click()`);
++      const text = await ctx.eval(`${frame}.contentDocument.body.innerText`);
++      await ctx.eval(`${frame}.contentDocument.querySelector('.studio-navigation-open button[aria-label="关闭项目导航"]')?.click()`);
++      await ctx.eval(`${frame}.contentDocument.querySelector('[aria-label="项目导航"][aria-expanded="true"]')?.click()`);
++      await ctx.eval(`document.querySelector('[aria-label="Expand panel"]')?.click()`);
++      await ctx.waitFor(`${frame}.getBoundingClientRect().width > 600`);
++        await ctx.prove('iPolloWork 加载幕织真实 Studio 与本机项目库', {
++          voiceover: vo[2],
++          assert: async () => {
++            ctx.assert(text.includes('MUWEAVE STUDIO') && text.includes('新建项目'), 'Actual Studio project UI must render.');
++            ctx.assert(['剧本', '资产库', '导演台', '成片'].every(label => text.includes(label)), 'All production stages must be available.');
++            ctx.assert(!text.includes('连接超时') && !text.includes('操作未完成'), 'Studio must connect without errors.');
++            ctx.assert(await ctx.eval(`${frame}.getBoundingClientRect().width > 200`), 'Studio must be visible.');
++          },
++          screenshot: { name: 'studio-embedded', requireText: ['幕织 Studio'] },
++        });
++    } },
++  ],
++};
+diff --git a/evals/voiceovers/muweave-plugin-review.md b/evals/voiceovers/muweave-plugin-review.md
+new file mode 100644
+index 000000000..052d0440f
+--- /dev/null
++++ b/evals/voiceovers/muweave-plugin-review.md
+@@ -0,0 +1,9 @@
++# 幕织本地插件审批与 Studio
++
++用户已授权增加需要明确审批的本地插件安装入口。用独立测试空间展示已批准的流程，不生成付费视频。
++
++1. 选择幕织插件包后，可以查看它的权限、服务代码和文件指纹。未确认审批时，安装按钮不可用。
++
++2. 确认这个文件指纹对应的插件后完成安装，幕织出现在已安装插件中。
++
++3. 从右侧菜单打开幕织 Studio，在 iPolloWork 里使用剧本、资产、导演台和成片工作台。
+-- 
+2.54.0.windows.1
+

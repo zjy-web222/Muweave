@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { zipSync } from 'fflate'
 import { pluginTools, pluginVersion, studioUri } from '../dist/main/plugin-contract.js'
@@ -68,6 +68,7 @@ if (Object.values(files).reduce((sum, bytes) => sum + bytes.length, 0) > 10 * 10
   throw new Error('插件超过宿主 10 MB 限制')
 await writeFile(resolve(`release/Muweave-${version}.ipollowork-plugin`), archive)
 await writeFile(resolve(`release/Muweave-${version}-plugin.zip`), archive)
+await copyFile(resolve('scripts/ipollowork-local-plugin-review.patch'), resolve('release/iPolloWork-local-plugin-review.patch'))
 const catalog = resolve('release/.agents/plugins/marketplace.json')
 await mkdir(dirname(catalog), { recursive: true })
 await writeFile(catalog, json({ name: 'muweave-local', interface: { displayName: '幕织本地插件' },

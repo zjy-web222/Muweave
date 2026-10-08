@@ -70,6 +70,8 @@ npm run test:plugin
 
 六个工具分别负责打开 Studio、读取、编辑、生成、导入、导出。工具输入由原有 Zod 命令契约生成；模型无法通过工具读取、替换密钥。视频提交和重试要求 `confirmed:true`，已有 RH 币校验与未知提交结果的人工核实流程继续生效。
 
+iPolloWork 宿主审批改动保留在独立分支 `codex/muweave-plugin-review`，基于 `71a74ad22`；可移植补丁在 [`scripts/ipollowork-local-plugin-review.patch`](scripts/ipollowork-local-plugin-review.patch)，打插件包时一并复制到 `release/`。审批专项测试和真实界面 fraimz 流程已通过。宿主完整插件生命周期测试为 70 项通过、3 项失败，失败项涉及独立检出目录缺少其他插件构建产物。
+
 ## 已实现的制作流程
 
 1. **项目与分集**：新建项目、画幅、分集、上下集切换和剧本编辑。文本与其他参考文件可从 AI 对话框添加。更新已保存的剧本时，旧剧本和该集分镜视频自动归档，导演台使用新剧本重新拆镜。
