@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import mammoth from 'mammoth'
 import { ZodError } from 'zod'
 import {
@@ -39,6 +40,7 @@ import { CodexText } from './codex'
 import { prepareChatFile } from './chat-files'
 import { Queue, RunningHub, assertCoinOnlyWorkflow, inputsChanged, relevantAssets } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter } from './media'
+import { startPluginServer, type CommandFiles } from './plugin'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -57,15 +59,21 @@ const pendingChatFiles = new Map<
   string,
   { projectId: string; path: string; name: string; size: number }
 >()
+const commandFiles = new AsyncLocalStorage<CommandFiles>()
+const pluginMode = process.argv.includes('--plugin-server')
+let studioServer: Awaited<ReturnType<typeof startPluginServer>> | undefined
 if (process.env.DIRECTOR_DATA_DIR) app.setPath('userData', process.env.DIRECTOR_DATA_DIR)
 const primary = app.requestSingleInstanceLock()
 if (!primary) app.quit()
-app.on('second-instance', () => {
+app.on('second-instance', (_event, args) => {
+  if (args.includes('--plugin-server')) return
+  if (!window) createWindow()
   window?.show()
   window?.focus()
 })
 function changed() {
   window?.webContents.send('director:changed')
+  studioServer?.changed()
 }
 function key() {
   const value = store.get<string>('runninghub-key', '')
@@ -88,6 +96,13 @@ function snapshot(): Snapshot {
   }
 }
 async function chooseSave(defaultPath: string, extensions: string[]) {
+  const context = commandFiles.getStore()
+  if (context) {
+    const directory = context.projectId ? store.file(context.projectId, 'exports') : join(store.root, 'studio-exports')
+    await mkdir(directory, { recursive: true })
+    context.output = join(directory, `${randomUUID()}-${basename(defaultPath).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')}`)
+    return context.output
+  }
   return (
     await dialog.showSaveDialog(window!, {
       defaultPath,
@@ -96,6 +111,8 @@ async function chooseSave(defaultPath: string, extensions: string[]) {
   ).filePath
 }
 async function chooseFile(extensions: string[]) {
+  const context = commandFiles.getStore()
+  if (context) return context.files[0]
   return (
     await dialog.showOpenDialog(window!, {
       properties: ['openFile'],
@@ -134,39 +151,36 @@ function createWindow() {
   })
 }
 if (primary)
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
     store = new Store(join(app.getPath('userData'), 'library'))
     chatgpt = new ChatGPT(store, changed)
     codex = new CodexText(store)
     const api = new RunningHub(key)
     queue = new Queue(store, api, changed, app.isPackaged ? process.resourcesPath : undefined)
-    protocol.handle('media', async (request) => {
-      try {
-        const url = new URL(request.url),
-          [pid, mid, revision] = url.pathname.split('/').filter(Boolean)
+    const mediaFile = (url: URL) => {
+        const [pid, mid, revision] = url.pathname.split('/').filter(Boolean)
         id.parse(pid)
         id.parse(mid)
         const p = store.project(pid)
         if (url.hostname === 'preview') {
           if (!revision || !/^[a-f0-9]{16}$/.test(revision) ||
               !p.episodes.some((episode) => episode.id === mid)) throw new Error('invalid')
-          return net.fetch(pathToFileURL(store.file(pid, `exports/preview-${mid}-${revision}.mp4`)).href,
-            { headers: request.headers })
+          return store.file(pid, `exports/preview-${mid}-${revision}.mp4`)
         }
         if (url.hostname !== 'asset' || revision) throw new Error('invalid')
         const m = p.media.find((m) => m.id === mid)
         if (!m) throw new Error('missing')
-        return net.fetch(pathToFileURL(store.file(pid, m.file)).href, { headers: request.headers })
+        return store.file(pid, m.file)
+    }
+    const media = async (request: Request) => {
+      try {
+        return net.fetch(pathToFileURL(mediaFile(new URL(request.url))).href, { headers: request.headers })
       } catch {
         return new Response('Not found', { status: 404 })
       }
-    })
-    ipcMain.handle('director:command', async (event, raw): Promise<Reply> => {
-      if (
-        event.sender !== window?.webContents ||
-        event.senderFrame !== window.webContents.mainFrame
-      )
-        return { ok: false, error: '不允许的调用来源' }
+    }
+    protocol.handle('media', media)
+    const command = async (raw: unknown): Promise<Reply> => {
       try {
         const c = commandSchema.parse(raw)
         let message: string | undefined, text: string | undefined
@@ -247,9 +261,9 @@ if (primary)
             break
           case 'scriptChatPickFiles': {
             store.project(c.projectId)
-            const selection = await dialog.showOpenDialog(window!, {
-              properties: ['openFile', 'multiSelections'],
-            })
+            const context = commandFiles.getStore()
+            const selection = context ? { canceled: false, filePaths: context.files } :
+              await dialog.showOpenDialog(window!, { properties: ['openFile', 'multiSelections'] })
             if (selection.canceled) break
             if (selection.filePaths.length > c.max) throw new Error('每轮最多添加 10 个附件')
             const picked = []
@@ -777,18 +791,28 @@ if (primary)
           error: message.replaceAll(key() || '__no_secret__', '[已隐藏]').slice(0, 2500),
         }
       }
+    }
+    ipcMain.handle('director:command', async (event, raw): Promise<Reply> => {
+      if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame)
+        return { ok: false, error: '不允许的调用来源' }
+      return command(raw)
     })
-    createWindow()
+    studioServer = await startPluginServer({
+      userData: app.getPath('userData'), renderer: join(here, '../renderer'), store, snapshot, mediaFile,
+      command: (raw, context) => commandFiles.run(context, () => command(raw)),
+    })
+    if (!pluginMode) createWindow()
     queue.start()
     app.on('activate', () => {
       if (!window) createWindow()
     })
   })
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (!pluginMode && process.platform !== 'darwin') app.quit()
 })
 app.on('before-quit', () => {
   queue?.stop()
   exporter.cancel()
+  void studioServer?.close()
 })
 app.on('will-quit', () => store?.close())

@@ -2334,6 +2334,38 @@ small,
     display: none;
   }
 }
+.studio-navigation-toggle { display: none; }
+[data-studio] .app-shell { min-width: 0; }
+@media (max-width: 1000px) {
+  [data-studio] .sidebar { display: none; }
+  [data-studio] .studio-navigation-toggle { display: inline-flex; }
+  [data-studio] .sidebar.studio-navigation-open {
+    display: flex; position: fixed; inset: 0 auto 0 0; width: 240px; z-index: 80;
+    box-shadow: 12px 0 35px #00000020;
+  }
+  [data-studio] .topbar { padding: 0 16px; }
+  [data-studio] .script-grid { grid-template-columns: minmax(0, 1fr); }
+  [data-studio] .script-chat { position: static; }
+  [data-studio] .board-heading { flex-wrap: wrap; }
+  [data-studio] .shot-list-main p { max-width: 200px; }
+}
+@media (max-width: 680px) {
+  [data-studio] .director-body { flex-direction: column; overflow: auto; }
+  [data-studio] .board-main { flex: 0 0 auto; min-height: 550px; }
+  [data-studio] .inspector { width: 100%; max-height: none; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
+  [data-studio] .canvas-area { min-height: 300px; }
+  [data-studio] .canvas-toolbar { flex-wrap: wrap; height: auto; padding: 10px 12px; }
+  [data-studio] .toolbar-right { gap: 8px; }
+  [data-studio] .stagebar { padding: 0 12px; }
+  [data-studio] .stagebar nav > svg { display: none; }
+  [data-studio] .stagebar nav > button { padding: 8px; gap: 5px; }
+  [data-studio] .script-view, [data-studio] .assets-view, [data-studio] .cut-view { padding: 20px 14px; }
+  [data-studio] .script-paper { padding: 20px 18px 14px; }
+  [data-studio] .page-heading { flex-wrap: wrap; gap: 12px; }
+  [data-studio] .welcome { padding: 25px; }
+  [data-studio] .welcome-features { flex-wrap: wrap; justify-content: center; gap: 15px; }
+  [data-studio] .modal-backdrop { padding: 12px; }
+}
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

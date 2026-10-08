@@ -189,17 +189,22 @@ export const jobSchema = z.object({
   outputs: z.array(z.string()).default([]),
 })
 export type Job = z.infer<typeof jobSchema>
-export type Snapshot = {
-  projects: Project[]
-  jobs: Job[]
-  config: Config
-  hasKey: boolean
-  chatgptOpen: boolean
-  dataPath: string
-  exporting: boolean
-}
-export type Reply =
-  { ok: true; state: Snapshot; message?: string; text?: string } | { ok: false; error: string }
+export const snapshotSchema = z.object({
+  projects: z.array(projectSchema),
+  jobs: z.array(jobSchema),
+  config: configSchema,
+  hasKey: z.boolean(),
+  chatgptOpen: z.boolean(),
+  dataPath: z.string(),
+  exporting: z.boolean(),
+})
+export type Snapshot = z.infer<typeof snapshotSchema>
+export const replySchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), state: snapshotSchema, message: z.string().optional(),
+    text: z.string().optional(), download: z.string().optional() }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+])
+export type Reply = z.infer<typeof replySchema>
 const pid = { projectId: id }
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('snapshot') }),
@@ -332,6 +337,8 @@ export type Command = z.infer<typeof commandSchema>
 export interface Bridge {
   command(command: Command): Promise<Reply>
   onChange(listener: () => void): () => void
+  studio?: boolean
+  mediaUrl?(url: string): string
 }
 declare global {
   interface Window {
@@ -352,5 +359,6 @@ export function blankShot(episodeId: string, locale: Config['locale'] = 'zh'): S
   })
 }
 export function mediaUrl(projectId: string, mediaId: string) {
-  return `media://asset/${projectId}/${mediaId}`
+  const url = `media://asset/${projectId}/${mediaId}`
+  return typeof window !== 'undefined' && window.director?.mediaUrl ? window.director.mediaUrl(url) : url
 }

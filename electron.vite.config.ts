@@ -6,7 +6,10 @@ import { resolve } from 'node:path'
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    build: { outDir: 'dist/main', rollupOptions: { input: resolve('src/main/index.ts') } },
+    build: { outDir: 'dist/main', rollupOptions: { input: {
+      index: resolve('src/main/index.ts'), 'plugin-contract': resolve('src/shared/plugin.ts'),
+      'plugin-server': resolve('src/main/plugin.ts'),
+    } } },
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
@@ -23,6 +26,7 @@ export default defineConfig({
     plugins: [react(), tailwindcss()],
     build: {
       outDir: resolve('dist/renderer'),
+      assetsInlineLimit: 1024 * 1024,
       rollupOptions: { input: resolve('src/renderer/index.html') },
     },
   },

@@ -1,3 +1,4 @@
+import './bridge'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import brandMark from './assets/muweave-mark.png'
 import { createRoot } from 'react-dom/client'
@@ -30,6 +31,7 @@ import {
   Sun,
   History,
   Trash2,
+  Menu,
 } from 'lucide-react'
 import {
   blankShot,
@@ -107,6 +109,7 @@ function App() {
     [archiveShotId, setArchiveShotId] = useState(''),
     [archiveVideoId, setArchiveVideoId] = useState(''),
     [newEpisode, setNewEpisode] = useState(false),
+    [studioNavigation, setStudioNavigation] = useState(false),
     [episodeTitle, setEpisodeTitle] = useState('第二集')
   const t = (text: string) => translate(state?.config.locale || 'zh', text)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -243,14 +246,16 @@ function App() {
     <Workspace.Provider value={{ state, run, notice }}>
       <Language.Provider value={state.config.locale}>
         <div className="app-shell">
-          <aside className="sidebar">
+          <aside className={`sidebar ${studioNavigation ? 'studio-navigation-open' : ''}`}>
             <div className="brand">
               <div className="brand-mark">
                 <img src={brandMark} alt="" />
               </div>
+              {window.director.studio && <button className="icon-button studio-navigation-toggle"
+                aria-label={t('关闭项目导航')} onClick={() => setStudioNavigation(false)}><X size={16} /></button>}
               <div>
                 Muweave <span className="brand-cn">{t('幕织')}</span>
-                <small>WEAVE YOUR STORY</small>
+                <small>{window.director.studio ? 'MUWEAVE STUDIO' : 'WEAVE YOUR STORY'}</small>
               </div>
             </div>
             <Button className="new-project" onClick={() => setCreate(true)}>
@@ -444,6 +449,9 @@ function App() {
           <main className="main-workspace">
             <header className="topbar">
               <div className="breadcrumb">
+                {window.director.studio && <button className="icon-button studio-navigation-toggle"
+                  aria-label={t('项目导航')} aria-expanded={studioNavigation}
+                  onClick={() => setStudioNavigation(!studioNavigation)}><Menu size={17} /></button>}
                 <FolderOpen size={15} />
                 <span>{p?.title || t('工作空间')}</span>
                 {p && (

@@ -51,7 +51,24 @@ npm run build
 npm start
 ```
 
-如你的 npm 配置存在不可用代理，修复自己的代理配置后安装即可。本项目未修改系统网络、全局 npm 配置或 Codex 配置。
+如你的 npm 配置存在不可用代理，修复自己的代理配置后安装即可。本项目未修改系统网络或全局 npm 配置；本地插件安装会在 Codex 中登记幕织插件。
+
+## Codex 与 iPolloWork 插件 / Studio
+
+```sh
+npm run package:plugin
+npm run test:plugin
+```
+
+生成 `release/muweave-plugin/`、`release/Muweave-0.2.1-plugin.zip` 和 `release/Muweave-0.2.1.ipollowork-plugin`。插件复用本机幕织的 SQLite 项目库、加密 Key、资产目录、FFmpeg 和视频队列。后台服务只监听 `127.0.0.1`，每次启动生成临时会话地址；已有幕织进程会被复用。宿主关闭后后台保留未完成任务，不重复提交付费请求。不会自动启动 Windows 服务或开机自启。
+
+- **Codex**：在源码目录运行 `codex plugin marketplace add ./release`，再运行 `codex plugin add muweave@muweave-local`。新对话可使用「幕织」插件，要求打开 Studio 或直接创建剧本、分镜、导入资产、查询任务及导出成片。支持 MCP Apps 的宿主可内嵌 Studio；其他界面使用 `studio-info` 返回的本机页面地址。
+- **iPolloWork**：设置 → 扩展 → 插件 → 添加，选择 `.ipollowork-plugin`。支持本地审批的版本会展示服务源代码、文件指纹和权限；审批后安装，从工作台入口打开「幕织 Studio」。旧版仅接受签名本地服务，会拒绝这个自用插件；本任务提供的宿主审批修改需一并运行。
+- **Studio**：完整复用剧本、资产、导演台、成片和任务中心；支持浏览器上传、导出下载、连续视频与拖动播放、中英切换、明暗主题和窄侧栏布局。模型在宿主对话中创作后，可以通过插件工具直接写入项目，无需手工粘贴。
+
+这是本机开发插件包，MCP 启动路径和 `service/runtime.json` 指向当前已构建源码。换电脑或搬移源码后重新执行 `npm run package:plugin` 并更新安装；不携带用户项目、API Key 或浏览器会话。需 Node.js 22+ 与本机幕织 0.2.x 运行环境。`MUWEAVE_HOME` 可指定已构建源码，`MUWEAVE_EXECUTABLE` 可指定相应版本的安装程序。可用 `npm run studio` 单独启动后台 Studio。
+
+六个工具分别负责打开 Studio、读取、编辑、生成、导入、导出。工具输入由原有 Zod 命令契约生成；模型无法通过工具读取、替换密钥。视频提交和重试要求 `confirmed:true`，已有 RH 币校验与未知提交结果的人工核实流程继续生效。
 
 ## 已实现的制作流程
 
@@ -155,6 +172,8 @@ tests/
 npm test
 npm run build
 npm run test:desktop
+npm run test:plugin
+npm run package:plugin
 npm run package:win
 ```
 

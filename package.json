@@ -1,6 +1,6 @@
 {
   "name": "muweave",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "description": "Muweave 幕织 — weave your story into film",
   "author": "Muweave",
   "private": true,
@@ -10,6 +10,9 @@
     "dev": "node scripts/prepare-ffmpeg.mjs && electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "start": "electron .",
+    "studio": "electron . --plugin-server",
+    "package:plugin": "npm run build && node scripts/package-plugin.mjs",
+    "test:plugin": "node tests/plugin.mjs",
     "test": "vitest run",
     "test:desktop": "node tests/desktop.mjs",
     "package:win": "node scripts/prepare-ffmpeg.mjs && npm run build && electron-builder --win portable --x64 --config.electronDist=node_modules/electron/dist",

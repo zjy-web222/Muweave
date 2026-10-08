@@ -1,5 +1,5 @@
 import { useT } from './i18n'
-import { useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 import {
   Plus,
   Upload,
@@ -58,7 +58,7 @@ export function ScriptEditor({
       (a, b) =>
         a.turn.createdAt.localeCompare(b.turn.createdAt) || a.index - b.index || a.order - b.order,
     )
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (draftRef.current.episodeId === ep.id && draftRef.current.dirty &&
         (draftRef.current.script !== ep.script || draftRef.current.title !== ep.title)) return
     draftRef.current = { episodeId: ep.id, title: ep.title, script: ep.script, dirty: false }
@@ -89,10 +89,11 @@ export function ScriptEditor({
   }
   const saveRef = useRef(save)
   saveRef.current = save
-  beforeEpisodeChange.current = async () => !draftRef.current.dirty || (await saveRef.current())
   useEffect(() => {
+    const guard = async () => !draftRef.current.dirty || (await saveRef.current())
+    beforeEpisodeChange.current = guard
     return () => {
-      beforeEpisodeChange.current = null
+      if (beforeEpisodeChange.current === guard) beforeEpisodeChange.current = null
     }
   }, [beforeEpisodeChange])
   useEffect(() => {
