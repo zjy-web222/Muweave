@@ -6,7 +6,7 @@
 
 幕织是一个使用 Electron、React 和 TypeScript 构建的本地 AI 导演台。从剧本对话、人物与场景资产、分镜视频到整集成片，在同一个项目中完成创作。既可作为独立桌面软件运行，也可通过插件在 Codex 和 iPolloWork 中使用 Studio 页面。
 
-项目、素材和任务记录保存在本机；AI 生成需要连接 ChatGPT 或 RunningHub。当前运行环境以 **Windows x64** 为主。
+项目、素材和任务记录保存在本机；AI 生成可分别连接 ChatGPT 或文字、图片、视频服务商的官方 API。当前运行环境以 **Windows x64** 为主。
 
 <img width="1524" height="951" alt="幕织导演台：示例项目的镜头列表" src="https://github.com/user-attachments/assets/3ad6603f-ddff-40ea-aa26-9275698ecbc6">
 
@@ -70,6 +70,39 @@ Windows 安装版和免安装版的构建命令见[开发与验证](#开发与�
 
 在“连接与设置”中配置。项目内容和生成服务凭据分别存储，插件复用同一套本地配置。
 
+### 独立模型与 Key 配置
+
+设置页分为**文字模型 / 图片模型 / 视频模型**。三个通道可以选择不同服务；即使都选择 OpenAI，也分别保存各通道的 Key，不自动复用。旧设置会保留原有 ChatGPT 与 RunningHub 连接。
+
+| 通道 | 支持服务 | 接入方式 |
+| --- | --- | --- |
+| 文字：剧本、对话、资产提取、分镜 | ChatGPT、OpenAI、DeepSeek、通义千问、Claude、Gemini、Kimi、智谱 GLM、豆包、MiniMax、Grok、Mistral、腾讯混元、百度文心、阶跃星辰 | ChatGPT 账号或各服务的官方 API Key |
+| 图片：资产参考图、镜头首尾帧 | ChatGPT、OpenAI GPT Image、通义万相、Gemini、Seedream、MiniMax Image-01、Grok Imagine、FLUX、GLM-Image / CogView | 独立的图片服务授权，结果自动入库 |
+| 视频 | RunningHub、可灵、MiniMax 海螺、Seedance、Grok Imagine | 独立视频 Key；可灵支持新版 API Key 或旧版 Access Key + Secret Key |
+
+1. 选择生成通道和服务商，选择或填写模型 ID，再填写该通道的 Key。
+2. 通义、可灵、MiniMax、Kimi、GLM 支持中国大陆与海外接口，区域 Key 不可混用。豆包 / Seedream / Seedance 使用火山方舟中国区；Grok、Mistral、FLUX 使用官方国际接口。文字 / 图片模型 ID 可按同接口能力修改；视频、万相和 FLUX 图片从已适配模型中选择。
+3. 保存后无需复制提示词或跳转网页。模型及区域在入队时记录，后续切换服务不会改变已排队任务的模型。使用同服务的新账号 Key 前应先处理旧账号的未完成任务。
+4. “检查连接”使用不收费的模型或任务查询；万相、MiniMax、火山方舟、GLM、FLUX 只确认配置已保存，不冒充已验证生成权限，也不提交付费测试。
+
+新增预设包括 Kimi K3 / K2.6、GLM 5.3 / 5.2 / 4.7 / 4.6V、Doubao Seed 2.1 / 2.0、MiniMax M3 / M2.7 / M2.5、Grok 4.7、Mistral Small / Large，Seedream 5.0 / 4.5 / 4.0、Image-01、Grok Imagine Image 2.0、FLUX.2 Pro / Max / Flex / Klein，以及 Seedance 2.5 / 2.0 / Fast 和 Grok Imagine Video 1.5。模型是否可用取决于官方账号、区域和开通权限；接口适配使用隔离测试验证，未宣称真实账号付费生成已验证。
+
+进一步扩展了混元 TurboS / T1、文心 4.5 Turbo / Turbo VL、Step 3.7 Flash / 3.5 Flash，以及 GLM-Image / CogView-4。混元与文心使用中国区接口；StepFun 支持中国区与国际区，区域 Key 分开保存。混元、非视觉文心和 Step 3.5 不接受图片附件；Step 3.7 支持视觉输入。新增文字接入通过提示词请求 JSON，仍由共享数据契约验证结果，不冒充严格结构化输出。智谱图片从已适配预设选择，按模型设置尺寸，下载不附带 Key。混元、StepFun 的连接检查只确认配置保存，不提交付费测试。Veo、Runway 尚未适配，不能在当前设置中调用；Sora Videos API 已下线，不作为可用预设。
+
+本轮官方参考：[混元](https://cloud.tencent.com/document/product/1729/111007)、[文心](https://cloud.baidu.com/doc/qianfan-api/s/3m7of64lb)、[StepFun](https://github.com/stepfun-ai/Step-3.7-Flash)、[智谱图片](https://docs.z.ai/api-reference/image/generate-image)、[Sora 下线公告](https://developers.openai.com/api/docs/deprecations)。
+
+Seedance 与 Grok 视频接入支持 4–15 秒和首尾帧，按原有队列顺序生成；Seedance 需要同时提供首帧才能设置尾帧，Grok 允许单独尾帧。当前这两个接入不传递前镜头音轨或多资产参考图，原生声音不等于音色继承保证。FLUX 保存任务 ID 和服务返回的集群查询地址，重启后只继续查询原任务；查询地址经官方域名和路径校验后才附带 Key，下载图片不附带 Key。
+
+新增接入依据：[Kimi 模型与 API](https://platform.kimi.com/docs/models)、[GLM Chat API](https://docs.z.ai/api-reference/llm/chat-completion)、[火山方舟视频 API](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、[Seedream](https://docs.volcengine.com/docs/ark/seedream-4-0-5-0?lang=zh)、[MiniMax 文字](https://platform.minimax.io/docs/api-reference/text-openai-api)、[MiniMax 图片](https://platform.minimax.io/docs/api-reference/image-generation-t2i)、[Grok 图片](https://docs.x.ai/developers/model-capabilities/images/generation)、[Grok 首尾帧](https://docs.x.ai/developers/model-capabilities/video/reference-to-video)、[FLUX](https://docs.bfl.ai/quick_start/generating_images)、[Mistral](https://docs.mistral.ai/api)。
+
+API 费用由对应服务商账户承担；ChatGPT 订阅不包含 OpenAI API 额度。文字服务分析文件时，现有解析器先提取文本；图片附件需要有视觉能力的文字模型。本次 DeepSeek 接入只处理文字，图片附件会明确提示更换服务。
+
+视频仍按镜头顺序串行生成，同场景使用上一镜实际尾帧。RunningHub 保留多参考图、前镜音视频参考和 RH币计费检查。可灵适配首尾帧与 2.6 原生声音；本次接口不继承前镜音轨或多参考图。海螺适配首帧与 6 / 10 秒无声视频，配音需另行导入；没有首帧时仅支持横屏。需要人物、环境和音色多参考连续时使用 RunningHub。所有结果仍需人工检查。
+
+万相图片保存远端任务 ID；重新查询或重启恢复时只查询原任务。付费提交结果未知时不自动重试。新视频服务的任务 ID 也保留在任务中心；不支持远端取消的接口不会显示已远端取消。
+
+接入依据：[OpenAI Images API](https://developers.openai.com/api/docs/guides/image-generation)、[DeepSeek API](https://api-docs.deepseek.com/)、[通义 OpenAI 兼容接口](https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope)、[万相生图](https://help.aliyun.com/en/model-studio/text-to-image-v2-api-reference)、[Claude Messages](https://platform.claude.com/docs/en/api/messages/create)、[Gemini Interactions](https://ai.google.dev/api/interactions-api)、[可灵官方 API](https://kling.ai/document-api/api/video/2-6/image-to-video/legacy)、[MiniMax 海螺](https://platform.minimax.io/docs/api-reference/video-generation-i2v)。
+
 ### ChatGPT：文字与图片
 
 连接一次 ChatGPT 账号，通过随软件提供的 Codex 运行时生成剧本、分镜和图片。参考图生成完成后会直接保存到对应资产或镜头，并选中为当前版本，无需复制提示词、跳转其他页面或手动导入结果。
@@ -99,7 +132,7 @@ Windows 开发启动及打包脚本自动准备 `vendor/ffmpeg/`，优先复用�
 ### 从故事到分镜
 
 1. **创建项目与分集**：选择 `16:9`、`9:16` 或 `1:1`，输入故事或在 AI 编剧中对话。
-2. **应用剧本**：查看候选内容，点击“应用到剧本”。切换分集、项目或工作页面时会先保存编辑，也可手动保存。
+2. **应用剧本**：查看候选内容，点击“应用到剧本”。每次 AI 返回剧本后，可以选择两个建议润色方向之一，或输入自定义方向再润色；也可以选择“不润色”保留此版。润色基于点击时选中的候选剧本，返回完整的新候选版本，由用户手动应用；选择“不润色”不会发起生成。切换分集、项目或工作页面时会先保存编辑，也可手动保存。
 3. **准备资产**：固定人物外观、服装、场景布局和道具描述，上传 PNG / JPEG / WebP 或直接生成参考图。
 4. **AI 拆解分镜**：生成可编辑的镜头；核对动作、说话人、对白、时长和关联资产。结构化导入会复用同名同类型资产，新镜头追加到当前集。
 5. **生成视频**：按镜头顺序加入队列，审看每个结果，必要时修改后人工重试。
@@ -109,11 +142,32 @@ Windows 开发启动及打包脚本自动准备 `vendor/ffmpeg/`，优先复用�
 
 ### 人物与场景连续性
 
-内置多参考图路径使用 MiniMax H3 Ref2VA。软件按镜头关联的资产选择人物、场景和道具参考图，最多 **9 张**；参考图版本在入队时固定。同场景后续镜头等待前一镜头完成，再参考它的末帧和视频。前镜头失败时，后续镜头暂停；没有任何参考图的新场景使用保留的 FL2VA 路径。
+内置多参考图路径使用 MiniMax H3 Ref2VA。软件按镜头关联的资产选择人物、场景和道具参考图，最多 **9 张**；参考图版本在入队时固定。同场景后续镜头等待前一镜头完成，再参考它的末帧和视频；前镜头含音轨时，视频与音轨一起作为参考。前镜头失败时，后续连续镜头暂停；没有任何参考图的新场景使用保留的 FL2VA 路径。
+
+**局部重生成**会自动接回两侧保留的视频：同场景前镜视频的实际尾帧作为开场参考，后镜保留视频的实际首帧作为收尾目标，优先于手动首尾帧。保留视频的版本在入队时固定。连续重生成多个镜头时，中间镜头依次使用新生成的前镜尾帧，只有这一段的最后一镜使用后方保留视频的首帧；不引用本批即将替换的旧视频。没有相邻视频的一侧不添加自动首尾帧，也不越过缺失镜头去找远处视频。人物、环境及道具资产仍作为身份参考，与首尾帧约束分开。
+
+生成窗口逐镜显示首尾帧来源。提示词加入前后镜头动作及构图关系，要求仅执行当前镜头的动作和对白，不重演前镜、不提前演后镜、不凭空跳跃或转场。RunningHub Ref2VA 将两端帧作为标明用途的参考图；可灵使用首尾帧接口。当前海螺接口不支持尾帧控制，需要接回后镜时会在提交前提示改用 RunningHub 或可灵，避免忽略收尾约束后收费。
 
 提示词会标明参考图编号及用途，并传入角色设定、说话人和对白。单镜提交时长为 **4–15 秒**；短镜头补到 4 秒，对白会按长度补足所需时长，超过当前 10 秒对白估算上限的内容需要拆镜。整批镜头先校验，通过后才创建视频任务。
 
 参考图和前镜头能改善连续性，生成模型仍可能改变人物、环境或对白，也不会严格锁定首帧。关键角色和地点应使用稳定的设定及选定参考图，并逐镜审看。
+
+### 视频生成规范
+
+以下是软件批量视频生成的执行规则和成片验收要求，适用于桌面版、插件和 Studio；相关画面、对白与声音约束自动加入提交给模型的提示词。
+
+1. **按顺序串行生成**：以项目分集顺序和导演台镜头顺序为准，与勾选顺序或传入 ID 的顺序无关。每次仅提交一个视频任务，前一任务生成、下载并保存完成后再提交下一任务；同批较早镜头仍在等待或暂停时，后面的镜头不能越过它。
+2. **上一镜尾帧衔接**：同场景的下一片段提取上一片段实际视频的最后一帧，优先作为开场衔接参考，同时带入前视频的动作和运镜参考。即使下一镜已有手动首帧，同场景连续生成仍优先使用上一镜尾帧。从最终姿态和物件位置继续，不重复前一镜已经完成的动作，不重置场景。
+   **重生成接回后镜**：单镜或局部批量重生成时，以后方紧邻且保留的视频实际首帧作为收尾目标；逐步达到对应姿态、道具状态、视线、运动方向、布局和光线，让后镜自然继续。仅使用同场景、同集的邻镜；缺少视频的一侧留空。本批选中的前镜等待新结果，选中的后镜不作为旧视频参考，避免新旧混用或循环等待。
+3. **转场由剧本决定**：同场景使用一致的地点、内外景和时段标识。剧本明确改变地点或时段时按新场景生成，避免把旧场景尾帧强加给新场景；人物身份和音色设定继续保持一致。分集之间不自动衔接。
+4. **人物不变形**：沿用选定人物参考图和角色设定，保持脸部身份、年龄、发型、服装和身体比例；禁止无剧情依据的换脸、变装、肢体增减、手部异常、形体扭曲或闪烁。
+5. **环境和物品稳定**：保持场景几何、空间布局、光线方向、色彩以及道具形状、比例和状态；同场景镜头中禁止背景无故变化、物品凭空出现或消失。动作导致的位置变化必须连续且合理。
+6. **音色稳定且正确对应人物**：固定每名说话人的身份标记、音色、年龄感、口音、音高范围和说话方式。前镜头有音轨时，使用 `video_audio` 参考已有音色和环境声；只有同一说话人才能复用对应声线，不把上一人物的声线套给下一人物。情绪可随剧情变化，声音身份保持不变。没有音轨时仅使用视觉参考，不伪造音频参考。
+7. **对白准确、声音无异常**：逐字使用当前镜头剧本对白，保持原语言和说话顺序，不复制上一镜对白，不添加背景人声或乱说台词；语速自然、口型对应，禁止漏字、重复音节、截断台词、突然变声、爆音、蜂鸣、金属音或机械失真。无对白镜头不生成语音，未说话人物不做说话口型。
+8. **失败和未知结果不得跳过连续依赖**：需要等待新结果的前镜失败、取消或缺少可用视频时，后续连续镜头暂停；固定的邻镜参考视频丢失时不提交。初始没有邻镜视频的一侧不建立依赖。提交结果未知时保留任务 ID，人工核实后恢复查询，不自动重新提交付费任务。修改前镜头后，已生成的后续视频标记为需更新。
+9. **逐镜验收**：检查尾帧接续、人物与环境、对白、口型、音色和声音异常，再检查整集拼接效果。不合格镜头应修正设定或素材并由用户重新生成，随后更新受影响的后续镜头。上述质量要求是生成约束和验收标准；Ref2VA 的尾帧是参考条件，不能宣称精确锁帧、自动质检通过或零变形。
+
+音轨参考接入依据：[RunningHub Ref2VA 节点实现](https://github.com/HM-RunningHub/ComfyUI_RH_MinMaxH3/blob/main/minimax_h3_nodes/api/conditioning.py)。声音参考与原对白区分依据：[MiniMax 官方全参考提示词指南](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md)。
 
 ### 剧本更新与视频存档
 
@@ -124,7 +178,7 @@ Windows 开发启动及打包脚本自动准备 `vendor/ffmpeg/`，优先复用�
 ### 成片输出
 
 - MP4：H.264 + AAC、30 fps，支持 1920×1080、1080×1920、1080×1080。
-- 最终 MP4 和整集预览的右下角自动添加幕织品牌标志水印，保留安全边距；原始镜头素材不添加水印。
+- 最终 MP4 和整集预览的右下角自动添加品牌名「幕织 Muweave」文字水印，保留安全边距；原始镜头素材不添加水印。Windows 使用系统微软雅黑字体。
 - 按镜头顺序和设定时长拼接；画幅不符时等比例适配并补边，短视频补尾帧，长视频截断。
 - 导入的配音优先，否则保留视频原音轨；没有音轨时补静音。
 - 整集预览复用导出流程，更换视频、配音或时长后重新生成缓存。

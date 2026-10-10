@@ -1,5 +1,5 @@
 import { useT } from './i18n'
-import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { X, Image as ImageIcon, Film, Music2, Loader2 } from 'lucide-react'
 import {
   mediaUrl,
@@ -8,6 +8,7 @@ import {
   type Project,
   type Reply,
   type Snapshot,
+  type AiTask,
 } from '../shared/schema'
 
 export const Workspace = createContext<{
@@ -16,6 +17,25 @@ export const Workspace = createContext<{
   notice: (s: string) => void
 }>(null!)
 export const useWorkspace = () => useContext(Workspace)
+export function AITaskProgress({ task, runningLabel = 'AI 正在后台生成，完成后自动保存。' }: { task: AiTask; runningLabel?: string }) {
+  const t = useT(), { state } = useWorkspace()
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (task.status !== 'running') return
+    const refresh = () => setElapsed(Math.max(0, Math.floor((Date.now() - Date.parse(task.startedAt || task.createdAt)) / 1000)))
+    refresh()
+    const timer = setInterval(refresh, 1000)
+    return () => clearInterval(timer)
+  }, [task.status, task.startedAt, task.createdAt])
+  if (!['queued', 'running'].includes(task.status)) return null
+  const queued = state.aiTasks.filter((item) => item.status === 'queued').reverse()
+  const ahead = Math.max(0, queued.findIndex((item) => item.id === task.id)) +
+    (state.aiTasks.some((item) => item.status === 'running') ? 1 : 0)
+  return <p className="small muted" role="status">
+    {task.status === 'queued' ? t('排队中 · 前面还有 {count} 个任务').replace('{count}', String(ahead)) : t(runningLabel)}
+    {task.status === 'running' && <span aria-hidden="true"> {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>}
+  </p>
+}
 export function Button({
   children,
   onClick,

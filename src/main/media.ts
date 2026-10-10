@@ -3,13 +3,16 @@ import { existsSync } from 'node:fs'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { promisify } from 'node:util'
 import { zip, unzip, strToU8, strFromU8 } from 'fflate'
 import { Store, inside } from './store'
 import { projectSchema, type Asset, type Media, type Project } from '../shared/schema'
 import { escapeHtml, toSrt } from '../shared/director'
+import { approvedModelMedia } from './models'
+import type { ModelSelection } from '../shared/models'
 
-export const episodeRenderVersion = 'muweave-watermark-v1'
+export const episodeRenderVersion = 'muweave-bilingual-wordmark-v3'
 
 const extensions = {
   image: ['.png', '.jpg', '.jpeg', '.webp'],
@@ -114,6 +117,7 @@ export async function downloadVideo(
   projectId: string,
   url: string,
   signal?: AbortSignal,
+  provider: ModelSelection['provider'] = 'runninghub',
 ) {
   let current = new URL(url)
   for (let redirects = 0; redirects < 4; redirects++) {
@@ -121,13 +125,13 @@ export async function downloadVideo(
       current.protocol !== 'https:' ||
       current.username ||
       current.password ||
-      !(
+      !(provider !== 'runninghub' ? approvedModelMedia(current, provider) : (
         current.hostname.endsWith('.runninghub.ai') ||
         current.hostname.endsWith('.runninghub.cn') ||
         current.hostname.endsWith('.xiaoyaoyou.com')
-      )
+      ))
     )
-      throw new Error('视频下载域名未经批准，请从 RunningHub 下载结果后手动导入。')
+      throw new Error('视频下载域名未经批准，请从服务商下载结果后手动导入。')
     const res = await fetch(current, {
       redirect: 'manual',
       signal: signal
@@ -277,6 +281,17 @@ export function ffmpegBinaries(resourcesPath?: string) {
   if (resourcesPath) throw new Error('应用内 FFmpeg 文件缺失，请重新安装软件。')
   return { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe' }
 }
+export async function hasAudioTrack(input: string, resourcesPath?: string) {
+  const { ffprobe } = ffmpegBinaries(resourcesPath)
+  try {
+    const { stdout } = await promisify(execFile)(ffprobe, [
+      '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', input,
+    ], { windowsHide: true, shell: false, timeout: 60000, maxBuffer: 64 * 1024 })
+    return stdout.trim().length > 0
+  } catch {
+    throw new Error('无法检查上一镜头音轨，未提交本镜头')
+  }
+}
 export async function extractLastFrame(input: string, output: string, resourcesPath?: string) {
   const { ffmpeg } = ffmpegBinaries(resourcesPath)
   await new Promise<void>((resolve, reject) => {
@@ -293,6 +308,24 @@ export async function extractLastFrame(input: string, output: string, resourcesP
       code === 0 ? resolve() : reject(new Error(`无法提取上一镜头末帧：${error || `FFmpeg ${code}`}`))
     })
   })
+}
+export async function extractFirstFrame(input: string, output: string, resourcesPath?: string) {
+  const { ffmpeg } = ffmpegBinaries(resourcesPath)
+  try {
+    await promisify(execFile)(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', input,
+      '-frames:v', '1', '-update', '1', output],
+    { windowsHide: true, shell: false, timeout: 60000, maxBuffer: 64 * 1024 })
+    if (!(await stat(output)).size) throw new Error('Empty frame')
+  } catch { throw new Error('无法提取后镜头首帧，未提交远端任务') }
+}
+export async function fitReferenceFrame(input: string, output: string, aspect: Project['aspect'], resourcesPath?: string) {
+  const { ffmpeg } = ffmpegBinaries(resourcesPath)
+  const size = aspect === '16:9' ? [1280, 720] : aspect === '9:16' ? [720, 1280] : [1024, 1024]
+  try {
+    await promisify(execFile)(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-i', input,
+      '-vf', `scale=${size[0]}:${size[1]}:force_original_aspect_ratio=decrease,pad=${size[0]}:${size[1]}:(ow-iw)/2:(oh-ih)/2`,
+      '-frames:v', '1', '-update', '1', output], { windowsHide: true, shell: false, timeout: 60000, maxBuffer: 64 * 1024 })
+  } catch { throw new Error('无法准备视频首帧，未提交远端任务') }
 }
 export class Exporter {
   child: ChildProcess | null = null
@@ -368,15 +401,13 @@ export class Exporter {
       }
       if (shots.some((s) => !s.videoMediaId)) throw new Error('请为每个镜头选择视频后再导出 MP4')
       const { ffmpeg, ffprobe } = ffmpegBinaries(this.resourcesPath)
-      const watermark = this.resourcesPath
-        ? join(this.resourcesPath, 'muweave-mark.png')
-        : resolve(
-            dirname(fileURLToPath(import.meta.url)),
-            '../..',
-            'src/renderer/assets/muweave-mark.png',
-          )
-      if (!existsSync(watermark))
-        throw new Error('品牌水印素材缺失，请重新安装软件或恢复品牌素材。')
+      const font = [
+        join(process.env.SystemRoot || 'C:/Windows', 'Fonts', 'msyh.ttc'),
+        '/System/Library/Fonts/PingFang.ttc',
+        '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+      ].find((file) => existsSync(file))
+      if (!font) throw new Error('缺少中文水印字体，请安装微软雅黑或 Noto Sans CJK 字体后导出。')
+      const watermarkFont = font.replace(/\\/g, '/').replace(/:/g, '\\:')
       await mkdir(store.file(p.id, 'exports'), { recursive: true })
       temp = await mkdtemp(store.file(p.id, 'exports/render-'))
       const [w, h] =
@@ -396,12 +427,10 @@ export class Exporter {
         const args = ['-hide_banner', '-y', '-i', input]
         if (audio) args.push('-i', store.file(p.id, audio.file))
         else if (!hasAudio) args.push('-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo')
-        args.push('-i', watermark)
         args.push(
           '-filter_complex',
-          `[0:v:0]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,tpad=stop_mode=clone:stop_duration=${s.duration},drawbox=x=iw-128:y=ih-128:w=96:h=96:color=white@0.65:t=fill[base];` +
-            `[${separateAudio ? 2 : 1}:v:0]scale=96:96,format=rgba,colorchannelmixer=aa=0.88[mark];` +
-            '[base][mark]overlay=x=W-w-32:y=H-h-32:eof_action=repeat:repeatlast=1,format=yuv420p[branded]',
+          `[0:v:0]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,tpad=stop_mode=clone:stop_duration=${s.duration},` +
+            `drawtext=fontfile='${watermarkFont}':text='幕织 Muweave':fontsize=32:fontcolor=white@0.88:x=w-tw-32:y=h-th-32:shadowcolor=black@0.55:shadowx=1:shadowy=1,format=yuv420p[branded]`,
           '-map',
           '[branded]',
           '-map',

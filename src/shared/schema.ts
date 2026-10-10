@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { defaultModels, modelsSchema, modelSelectionSchema, modelChannelSchema } from './models'
 
 export const id = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/)
 const text = z.string().max(200000)
@@ -67,12 +68,19 @@ export const chatAttachmentSchema = z.object({
   file: z.string().regex(/^chat\/[a-zA-Z0-9_-]{1,100}$/),
 })
 export type ChatAttachment = z.infer<typeof chatAttachmentSchema>
+export const scriptPolishDirectionSchema = z.object({
+  title: z.string().trim().min(1).max(40),
+  instruction: z.string().trim().min(1).max(300),
+})
 export const scriptChatTurnSchema = z.object({
   id,
   role: z.enum(['user', 'assistant']),
   text: z.string().min(1).max(10000),
   script: text.optional(),
   analysis: z.string().max(5000).optional(),
+  polishDirections: z.array(scriptPolishDirectionSchema).length(2).optional(),
+  polishSkipped: z.boolean().optional(),
+  polishSourceTurnId: id.optional(),
   attachments: z.array(chatAttachmentSchema).max(10).optional(),
   createdAt: z.string(),
 })
@@ -142,6 +150,7 @@ export const configSchema = z.object({
   theme: z.enum(['light', 'dark']),
   locale: z.enum(['zh', 'en']).default('zh'),
   paused: z.boolean(),
+  models: modelsSchema.default(defaultModels),
 })
 export type Config = z.infer<typeof configSchema>
 export const defaultConfig: Config = {
@@ -154,6 +163,7 @@ export const defaultConfig: Config = {
   theme: 'light',
   locale: 'zh',
   paused: false,
+  models: structuredClone(defaultModels),
 }
 export const jobSchema = z.object({
   id,
@@ -177,6 +187,9 @@ export const jobSchema = z.object({
   workflowId: z.string(),
   instanceType: z.enum(['default', 'plus']).optional(),
   previousShotId: id.optional(),
+  previousVideoMediaId: id.optional(),
+  nextShotId: id.optional(),
+  nextVideoMediaId: id.optional(),
   referenceMediaId: id.optional(),
   referenceMediaIds: z.array(id).max(9).optional(),
   aspect: projectSchema.shape.aspect.optional(),
@@ -187,16 +200,48 @@ export const jobSchema = z.object({
   error: z.string().optional(),
   pollErrors: z.number().default(0),
   outputs: z.array(z.string()).default([]),
+  model: modelSelectionSchema.optional(),
+  remoteKind: z.enum(['text2video', 'image2video']).optional(),
 })
 export type Job = z.infer<typeof jobSchema>
+export const aiRequestSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('scriptChatGenerate'), projectId: id, episodeId: id,
+    request: z.string().max(2000), attachmentIds: z.array(id).max(10).default([]),
+    polishTurnId: id.optional() }),
+  z.object({ type: z.literal('generateText'), projectId: id, episodeId: id,
+    kind: z.enum(['script', 'assets', 'storyboard']), prompt: text }),
+  z.object({ type: z.literal('generateStoryboard'), projectId: id, episodeId: id,
+    request: z.string().max(2000).default('') }),
+  z.object({ type: z.literal('generateImage'), projectId: id, ownerId: id,
+    slot: z.enum(['first', 'last', 'reference']),
+    prompt: z.string().trim().min(1).max(12000).optional() }),
+])
+export type AiRequest = z.infer<typeof aiRequestSchema>
+export const aiTaskSchema = z.object({
+  kind: z.literal('ai'), id, projectId: id, title: z.string().max(300),
+  request: aiRequestSchema,
+  attachments: z.array(chatAttachmentSchema).max(10).default([]),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']),
+  createdAt: z.string(), updatedAt: z.string(), startedAt: z.string().optional(),
+  error: z.string().max(2500).optional(), resultText: text.optional(),
+  message: z.string().optional(),
+  model: modelSelectionSchema.optional(),
+  polishSource: z.object({ turnId: id, script: text }).optional(),
+  remoteTaskId: z.string().max(200).optional(),
+  remoteQueryUrl: z.string().url().max(1000).optional(),
+}).refine((task) => task.projectId === task.request.projectId, '任务项目不一致')
+export type AiTask = z.infer<typeof aiTaskSchema>
 export const snapshotSchema = z.object({
   projects: z.array(projectSchema),
   jobs: z.array(jobSchema),
+  aiTasks: z.array(aiTaskSchema).default([]),
   config: configSchema,
   hasKey: z.boolean(),
   chatgptOpen: z.boolean(),
   dataPath: z.string(),
   exporting: z.boolean(),
+  credentials: z.record(z.string(), z.boolean()).default({}),
+  modelServicesReady: z.boolean().default(false),
 })
 export type Snapshot = z.infer<typeof snapshotSchema>
 export const replySchema = z.discriminatedUnion('ok', [
@@ -233,34 +278,17 @@ export const commandSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('deleteEpisode'), ...pid, episodeId: id }),
   z.object({ type: z.literal('scriptChat'), ...pid, episodeId: id, turn: scriptChatTurnSchema }),
+  z.object({ type: z.literal('scriptChatPolishDecision'), ...pid, episodeId: id, turnId: id, skipped: z.boolean() }),
   z.object({
     type: z.literal('scriptChatPickFiles'),
     ...pid,
     max: z.number().int().min(1).max(10),
   }),
-  z.object({
-    type: z.literal('scriptChatGenerate'),
-    ...pid,
-    episodeId: id,
-    request: z.string().max(2000),
-    attachmentIds: z.array(id).max(10).default([]),
-  }),
+  ...aiRequestSchema.options,
+  z.object({ type: z.literal('aiEnqueue'), request: aiRequestSchema }),
+  z.object({ type: z.literal('aiTask'), taskId: id, action: z.enum(['cancel', 'retry']) }),
   z.object({ type: z.literal('codexStatus') }),
   z.object({ type: z.literal('codexLogin') }),
-  z.object({
-    type: z.literal('generateText'),
-    ...pid,
-    episodeId: id,
-    kind: z.enum(['script', 'assets', 'storyboard']),
-    prompt: text,
-  }),
-  z.object({
-    type: z.literal('generateImage'),
-    ...pid,
-    ownerId: id,
-    slot: z.enum(['first', 'last', 'reference']),
-    prompt: z.string().trim().min(1).max(12000).optional(),
-  }),
   z.object({ type: z.literal('shot'), ...pid, shot: shotSchema }),
   z.object({ type: z.literal('deleteShot'), ...pid, shotId: id }),
   z.object({ type: z.literal('reorder'), ...pid, shotId: id, delta: z.enum(['up', 'down']) }),
@@ -300,7 +328,12 @@ export const commandSchema = z.discriminatedUnion('type', [
     type: z.literal('config'),
     config: configSchema,
     key: z.string().max(1000).optional(),
+    credentials: z.array(z.object({ channel: modelChannelSchema, selection: modelSelectionSchema,
+      key: z.string().trim().min(1).max(4000), secret: z.string().trim().max(4000).optional() })).max(20).optional(),
   }),
+  z.object({ type: z.literal('clearModelKey'), channel: modelChannelSchema, selection: modelSelectionSchema }),
+  z.object({ type: z.literal('testModelConnection'), channel: modelChannelSchema }),
+  z.object({ type: z.literal('modelStatus'), channel: modelChannelSchema }),
   z.object({ type: z.literal('clearKey') }),
   z.object({ type: z.literal('testConnection') }),
   z.object({ type: z.literal('workflow') }),
@@ -314,7 +347,7 @@ export const commandSchema = z.discriminatedUnion('type', [
     type: z.literal('job'),
     jobId: id,
     action: z.enum(['retry', 'cancel', 'resume', 'attach']),
-    taskId: z.string().regex(/^\d+$/).optional(),
+    taskId: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
   }),
   z.object({ type: z.literal('pause'), paused: z.boolean() }),
   z.object({ type: z.literal('exportArchive'), ...pid }),

@@ -55,6 +55,7 @@ try {
   const batchDialog = page.getByRole('dialog', { name: '生成视频 / 创建镜头分组' })
   await batchDialog.getByText('确认生成时会自动延长 1 个镜头').waitFor()
   assert.match(await batchDialog.locator('.batch-shots label').first().innerText(), /3s → \d+s/)
+  assert.match(await batchDialog.locator('.batch-shots label').first().innerText(), /无前镜视频/)
   await batchDialog.screenshot({ path: join(evidence, '02-dialogue-timing-preview.png') })
   await batchDialog.getByRole('button', { name: '关闭对话框' }).click()
   const archivedVideo = join(data, 'archived-shot.mp4')
@@ -69,6 +70,19 @@ try {
     ({ pid, sid }) => window.director.command({ type: 'importMedia', projectId: pid, ownerId: sid, slot: 'video' }),
     { pid: project.id, sid: shot.id },
   )).ok)
+  assert((await page.evaluate(
+    ({ pid, sid }) => window.director.command({ type: 'importMedia', projectId: pid, ownerId: sid, slot: 'video' }),
+    { pid: project.id, sid: project.shots[2].id },
+  )).ok)
+  await page.getByRole('button', { name: '批量', exact: true }).click()
+  const boundaryRows = batchDialog.locator('.batch-shots label')
+  for (let index = 0; index < await boundaryRows.count(); index++) {
+    if (index !== 1) await boundaryRows.nth(index).getByRole('checkbox').uncheck()
+  }
+  assert.match(await boundaryRows.nth(1).innerText(), /视频尾帧/)
+  assert.match(await boundaryRows.nth(1).innerText(), /保留视频首帧/)
+  await batchDialog.screenshot({ path: join(evidence, '02-partial-regeneration-boundaries.png') })
+  await batchDialog.getByRole('button', { name: '关闭对话框' }).click()
   await page.getByRole('button', { name: 'AI 拆解分镜' }).click()
   const storyboardDialog = page.getByRole('dialog', { name: 'AI 生成分镜' })
   await storyboardDialog.waitFor()
@@ -77,7 +91,7 @@ try {
   assert.equal(await storyboardDialog.getByText('发送给 ChatGPT 的提示词').count(), 0)
   await storyboardDialog.getByRole('textbox', { name: '补充创作要求（可选）' }).fill('突出线索出现的悬念。')
   await storyboardDialog.screenshot({ path: join(evidence, '02-storyboard-generator.png') })
-  await storyboardDialog.getByRole('button', { name: '取消' }).click()
+  await storyboardDialog.getByRole('button', { name: '关闭', exact: true }).click()
   const soleEpisodeRemoval = await page.evaluate(
     ({ projectId, episodeId }) =>
       window.director.command({ type: 'deleteEpisode', projectId, episodeId }),
@@ -134,6 +148,22 @@ try {
   assert((await append('assistant', '已加强悬念。', '新版悬念剧本。')).ok)
   await page.getByLabel('对话记录').getByText('把结尾改成悬念。', { exact: true }).waitFor()
   await page.getByText('已加强悬念。').waitFor()
+  const firstDraft = page.locator('.script-chat-turn').filter({ hasText: '已加强悬念。' })
+  const polishOptions = firstDraft.getByRole('region', { name: 'AI 润色选项' })
+  await polishOptions.getByText('要润色这版剧本吗？').waitFor()
+  assert.equal(await polishOptions.locator('.script-polish-direction').count(), 2)
+  assert(await polishOptions.getByRole('button', { name: '按自定义方向润色' }).isDisabled())
+  await polishOptions.getByLabel('自定义润色方向').fill('保留结局，让对白更克制。')
+  assert(await polishOptions.getByRole('button', { name: '按自定义方向润色' }).isEnabled())
+  await polishOptions.screenshot({ path: join(evidence, '03-script-polish-options.png') })
+  await polishOptions.getByRole('button', { name: '不润色', exact: true }).click()
+  await firstDraft.getByText('已选择不润色，保留此版').waitFor()
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects[0].episodes[0].scriptChat[1].polishSkipped, true)
+  assert.equal(snapshot.state.aiTasks.length, 0)
+  assert.notEqual(snapshot.state.projects[0].episodes[0].script, '新版悬念剧本。')
+  await firstDraft.getByRole('button', { name: '重新选择' }).click()
+  await polishOptions.getByText('要润色这版剧本吗？').waitFor()
   await page.getByRole('button', { name: '应用到剧本' }).click()
   await page.waitForFunction(
     () => document.querySelector('[aria-label="剧本正文"]')?.value === '新版悬念剧本。',
@@ -146,6 +176,10 @@ try {
   await page.getByRole('button', { name: '添加分集' }).click()
   await page.getByLabel('集名称').fill('第二集')
   await page.getByRole('button', { name: '创建分集' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'hidden' })
+  await page.waitForFunction(
+    () => document.querySelector('.script-episode-switch span')?.textContent?.trim() === '2 / 2',
+  )
   await page.getByLabel('剧本正文').fill('第二集未手动保存的草稿。')
   await page.getByRole('button', { name: '上一集' }).click()
   await page.waitForFunction(
@@ -172,6 +206,7 @@ try {
   await page.getByRole('button', { name: '添加分集' }).click()
   await page.getByLabel('集名称').fill('临时第三集')
   await page.getByRole('button', { name: '创建分集' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'hidden' })
   await page.getByLabel('剧本正文').fill('准备移除的草稿。')
   await page.locator('.episode-nav').getByRole('button', { name: '移除分集 临时第三集' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确认' }).click()
@@ -220,6 +255,20 @@ try {
   await page.getByRole('button', { name: '添加文件' }).click()
   await page.locator('.script-chat-files.pending').getByText('reference.xyz').waitFor()
   assert(await page.getByRole('button', { name: '发送给 AI 编剧' }).isEnabled())
+
+  // Generation lifecycle is tested against a fake Codex process in plugin.mjs.
+  // This desktop check preserves an unsent draft and files across all page tabs.
+  await page.getByLabel('发送到当前集').fill('切换页签后保留创作要求。')
+  for (const tab of ['资产库 02', '导演台 03', '成片 04']) {
+    await page.getByRole('button', { name: tab }).click()
+    assert.equal(await page.getByLabel('AI 编剧对话').isVisible(), false)
+    await page.getByRole('button', { name: '剧本 01' }).click()
+    assert.equal(await page.getByLabel('发送到当前集').inputValue(), '切换页签后保留创作要求。')
+    await page.locator('.script-chat-files.pending').getByText('reference.xyz').waitFor()
+    await page.getByLabel('对话记录').getByText('第二集 AI 回复').waitFor()
+  }
+  await page.screenshot({ path: join(evidence, '03-script-chat-draft-after-tabs.png') })
+  await page.getByLabel('发送到当前集').fill('')
   await page.getByRole('button', { name: '移除附件 reference.xyz' }).click()
   await page.locator('.script-chat').screenshot({ path: join(evidence, '03-script-chat.png') })
   await page.getByRole('button', { name: '资产库 02' }).click()
@@ -261,20 +310,70 @@ try {
   await page.screenshot({ path: join(evidence, '04-assets-upload.png') })
   await page.getByRole('button', { name: '连接与设置', exact: true }).click()
   await page.getByRole('dialog', { name: '连接与偏好设置' }).waitFor()
-  assert.equal(await page.getByText('ChatGPT 账号 · 文字与图片').count(), 1)
+  assert.equal(await page.getByRole('tab', { name: '文字模型' }).count(), 1)
+  assert.equal(await page.getByRole('tab', { name: '图片模型' }).count(), 1)
+  await page.getByRole('tab', { name: '视频模型' }).click()
   assert.equal(await page.getByText('ChatGPT 浏览器 · 图片辅助').count(), 0)
   assert.equal(await page.getByRole('textbox', { name: 'FFmpeg 可执行文件' }).count(), 0)
-  assert.equal(await page.getByText('已内置指定工作流，使用 RunningHub 中国站。').count(), 1)
+  assert.equal(await page.getByText('已内置指定工作流，使用 RunningHub 中国站。只接受消耗 RH币的消费级会员 Key，不使用钱包余额。').count(), 1)
   const mode = page.getByRole('combobox', { name: '视频生成模式' })
   assert.equal(await mode.inputValue(), 'plus')
   await mode.selectOption('default')
   await page.getByRole('button', { name: '保存设置' }).click()
   assert.equal((await page.evaluate(() => window.director.command({ type: 'snapshot' }))).state.config.instanceType, 'default')
   await page.getByRole('button', { name: '连接与设置', exact: true }).click()
+  await page.getByRole('tab', { name: '视频模型' }).click()
   assert.equal(await page.getByRole('combobox', { name: '视频生成模式' }).inputValue(), 'default')
   assert.equal(await page.getByRole('textbox', { name: 'Workflow ID' }).count(), 0)
   assert.equal(await page.getByText('参数映射').count(), 0)
   await page.screenshot({ path: join(evidence, '05-provider-settings.png') })
+  for (const [channel, providers] of [
+    ['文字模型', ['kimi', 'glm', 'doubao', 'minimax', 'xai', 'mistral', 'hunyuan', 'ernie', 'stepfun']],
+    ['图片模型', ['doubao', 'minimax', 'xai', 'bfl', 'glm']],
+    ['视频模型', ['doubao', 'xai']],
+  ]) {
+    await page.getByRole('tab', { name: channel }).click()
+    for (const provider of providers) {
+      await page.getByRole('combobox', { name: '服务商' }).selectOption(provider)
+      assert.equal(await page.getByLabel(/^API Key/).inputValue(), '')
+      assert(await page.getByLabel('模型 ID').inputValue())
+      if (channel === '视频模型') {
+        assert.equal(await page.getByLabel('模型 ID').evaluate((select) => select.tagName), 'SELECT')
+        assert(await page.getByText(/此接入不继承上一镜头音轨或多参考图/).isVisible())
+      }
+    }
+    await page.screenshot({ path: join(evidence, `05-expanded-${channel}.png`) })
+  }
+  await page.getByRole('tab', { name: '文字模型' }).click()
+  await page.getByRole('combobox', { name: '服务商' }).selectOption('deepseek')
+  await page.getByLabel(/^API Key/).fill('fixture-text-channel-key')
+  await page.screenshot({ path: join(evidence, '05-text-model.png') })
+  await page.getByRole('tab', { name: '图片模型' }).click()
+  await page.getByRole('combobox', { name: '服务商' }).selectOption('openai')
+  assert.equal(await page.getByLabel(/^API Key/).inputValue(), '')
+  await page.getByLabel(/^API Key/).fill('fixture-image-channel-key')
+  await page.screenshot({ path: join(evidence, '05-image-model.png') })
+  await page.getByRole('tab', { name: '视频模型' }).click()
+  await page.getByRole('combobox', { name: '服务商' }).selectOption('kling')
+  await page.getByLabel(/^API Key \/ Access Key/).fill('fixture-video-channel-key')
+  await page.getByLabel(/^Secret Key/).fill('fixture-video-secret-key')
+  await page.screenshot({ path: join(evidence, '05-video-model.png') })
+  await page.getByRole('button', { name: '保存设置' }).click()
+  const modelState = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(modelState.state.config.models.text.provider, 'deepseek')
+  assert.equal(modelState.state.config.models.image.provider, 'openai')
+  assert.equal(modelState.state.config.models.video.provider, 'kling')
+  assert.equal(modelState.state.credentials['text:deepseek:cn'], true)
+  assert.equal(modelState.state.credentials['image:openai:cn'], true)
+  assert.equal(modelState.state.credentials['video:kling:cn'], true)
+  assert.equal(modelState.state.credentials['text:openai:cn'], false)
+  assert.equal(JSON.stringify(modelState).includes('fixture-'), false)
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config: { ...config, models: {
+    text: { provider: 'chatgpt', model: '', region: 'cn' }, image: { provider: 'chatgpt', model: '', region: 'cn' }, video: { provider: 'runninghub', model: '', region: 'cn' },
+  } } }), modelState.state.config)).ok)
+  await page.getByRole('button', { name: '连接与设置', exact: true }).click()
+  await page.getByRole('dialog', { name: '连接与偏好设置' }).waitFor()
+
   await page.getByRole('button', { name: '关闭对话框', exact: true }).click()
   await page.locator('.episode-nav .nav-select').first().click()
   await page.getByRole('button', { name: '导演台 03' }).click()
@@ -286,8 +385,8 @@ try {
   const currentShot = snapshot.state.projects[0].shots.find((item) => item.episodeId === project.episodes[0].id)
   assert(currentShot)
   await page.getByRole('button', { name: '素材与版本' }).click()
-  await page.getByRole('button', { name: 'ChatGPT 生图' }).first().click()
-  const imageDialog = page.getByRole('dialog', { name: /ChatGPT 生图/ })
+  await page.getByRole('button', { name: 'AI 生图' }).first().click()
+  const imageDialog = page.getByRole('dialog', { name: /AI 生图/ })
   await imageDialog.waitFor()
   assert.equal(await imageDialog.getByRole('button', { name: '在软件中直接生成图片' }).count(), 1)
   assert.equal(await imageDialog.getByRole('button', { name: '复制并打开 ChatGPT' }).count(), 0)
@@ -337,7 +436,7 @@ try {
   const restored = await page.evaluate(() => window.director.command({ type: 'importArchive' }))
   assert(restored.ok, restored.error)
   assert.equal(restored.state.projects.length, 2)
-  assert.equal(restored.state.projects[0].media.length, 3)
+  assert.equal(restored.state.projects[0].media.length, 4)
   const restoredProject = restored.state.projects.find((item) => item.id !== project.id)
   await app.evaluate(({ dialog }) => {
     dialog.showSaveDialog = async () => { throw new Error('Project removal must not open a backup dialog') }
@@ -435,7 +534,7 @@ try {
   await page.getByRole('button', { name: 'AI storyboard' }).click()
   const englishStoryboard = page.getByRole('dialog', { name: 'AI storyboard generation' })
   await englishStoryboard.getByRole('button', { name: 'Generate shots' }).waitFor()
-  await englishStoryboard.getByRole('button', { name: 'Cancel' }).click()
+  await englishStoryboard.getByRole('button', { name: 'Close', exact: true }).click()
   await page
     .getByRole('group', { name: 'Interface theme' })
     .getByRole('button', { name: 'Light · Warm paper' })
@@ -472,6 +571,9 @@ try {
     snapshot.state.projects.find((p) => p.id === project.id).episodes[1].script,
     '第二集 AI 剧本。',
   )
+  assert.equal(snapshot.state.credentials['text:deepseek:cn'], true)
+  assert.equal(snapshot.state.credentials['image:openai:cn'], true)
+  assert.equal(snapshot.state.credentials['video:kling:cn'], true)
   assert.equal(snapshot.state.config.theme, 'light')
   assert.equal(snapshot.state.config.locale, 'en')
   const secret = 'local-test-only-not-a-real-key'

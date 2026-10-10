@@ -7,8 +7,10 @@ import {
   configSchema,
   projectSchema,
   jobSchema,
+  aiTaskSchema,
   type Project,
   type Job,
+  type AiTask,
   type Config,
   shotSchema,
 } from '../shared/schema'
@@ -119,7 +121,7 @@ export class Store {
   }
   jobs(): Job[] {
     return this.db
-      .prepare('SELECT document FROM jobs ORDER BY rowid DESC LIMIT 2000')
+      .prepare("SELECT document FROM jobs WHERE json_extract(document,'$.kind') IS NOT 'ai' ORDER BY rowid DESC LIMIT 2000")
       .all()
       .map((r) => jobSchema.parse(JSON.parse(String(r.document))))
   }
@@ -128,11 +130,20 @@ export class Store {
     if (!row) throw new Error('任务不存在')
     return jobSchema.parse(JSON.parse(String(row.document)))
   }
-  saveJob(j: Job) {
+  aiTasks(): AiTask[] {
+    return this.db.prepare("SELECT document FROM jobs WHERE json_extract(document,'$.kind')='ai' ORDER BY rowid DESC")
+      .all().map((row) => aiTaskSchema.parse(JSON.parse(String(row.document))))
+  }
+  aiTask(id: string): AiTask {
+    const row = this.db.prepare("SELECT document FROM jobs WHERE id=? AND json_extract(document,'$.kind')='ai'").get(id)
+    if (!row) throw new Error('AI 任务不存在')
+    return aiTaskSchema.parse(JSON.parse(String(row.document)))
+  }
+  saveJob(j: Job | AiTask) {
     j.updatedAt = new Date().toISOString()
     this.db
       .prepare('INSERT OR REPLACE INTO jobs VALUES(?,?)')
-      .run(j.id, JSON.stringify(jobSchema.parse(j)))
+      .run(j.id, JSON.stringify('kind' in j ? aiTaskSchema.parse(j) : jobSchema.parse(j)))
   }
   history(id: string) {
     return this.db

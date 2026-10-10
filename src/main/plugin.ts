@@ -9,7 +9,7 @@ import { commandSchema, type Reply, type Snapshot } from '../shared/schema'
 import { pluginCallSchema, pluginInputs, pluginTools, pluginVersion, studioUri, type PluginAction } from '../shared/plugin'
 import { inside, type Store } from './store'
 
-export interface CommandFiles { files: string[]; output?: string; projectId?: string }
+export interface CommandFiles { files: string[]; names?: string[]; output?: string; projectId?: string }
 type Options = {
   userData: string
   renderer: string
@@ -53,7 +53,7 @@ export async function studioHtml(root: string) {
 export async function startPluginServer(options: Options) {
   const token = randomBytes(32).toString('hex')
   const events = new Set<ServerResponse>()
-  const uploads = new Map<string, { file: string; created: number }>()
+  const uploads = new Map<string, { file: string; name: string; created: number }>()
   const downloads = new Map<string, string>()
   const uploadRoot = join(options.userData, 'studio-uploads')
   const descriptorPath = join(options.userData, 'studio-connection.json')
@@ -63,9 +63,9 @@ export async function startPluginServer(options: Options) {
     response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
     response.end(JSON.stringify(data))
   }
-  const runCommand = async (raw: unknown, files: string[] = []) => {
+  const runCommand = async (raw: unknown, files: string[] = [], names?: string[]) => {
     const command = commandSchema.parse(raw)
-    const context: CommandFiles = { files, ...('projectId' in command ? { projectId: command.projectId } : {}) }
+    const context: CommandFiles = { files, names, ...('projectId' in command ? { projectId: command.projectId } : {}) }
     const reply = await options.command(command, context)
     if (!reply.ok) return reply
     if (context.output && (await stat(context.output)).isFile()) {
@@ -95,14 +95,18 @@ export async function startPluginServer(options: Options) {
       if (input.projectId) {
         const project = options.store.project(input.projectId)
         return toolResult({ project, jobs: state.jobs.filter((job) => job.projectId === project.id).slice(0, 50),
+          aiTasks: state.aiTasks.filter((task) => task.projectId === project.id)
+            .filter((task, index) => index < 50 || ['queued', 'running'].includes(task.status)),
           ...(input.history ? { history: options.store.history(project.id) } : {}) })
       }
       return toolResult({ projects: state.projects.map((p) => ({ id: p.id, title: p.title,
         aspect: p.aspect, episodes: p.episodes.map((ep) => ({ id: ep.id, title: ep.title })),
         shotCount: p.shots.length, assetCount: p.assets.length })),
+        aiTasks: state.aiTasks.filter((task, index) => index < 50 || ['queued', 'running'].includes(task.status))
+          .map(({ id, projectId, title, status, error, model, remoteTaskId }) => ({ id, projectId, title, status, error, model, remoteTaskId })),
         jobs: state.jobs.slice(0, 50).map((j) => ({ id: j.id, projectId: j.projectId, shotId: j.shotId,
-          status: j.status, taskId: j.taskId, error: j.error })), hasKey: state.hasKey,
-        instanceType: state.config.instanceType, paused: state.config.paused })
+          status: j.status, taskId: j.taskId, error: j.error, model: j.model })), hasKey: state.hasKey,
+        models: state.config.models, instanceType: state.config.instanceType, paused: state.config.paused })
     }
     const input = pluginInputs[action].parse(call.arguments)
     if (!('command' in input)) throw new Error('缺少命令')
@@ -127,6 +131,7 @@ export async function startPluginServer(options: Options) {
     return toolResult({ message: reply.message, text: reply.text, download: reply.download,
       projects: reply.state.projects.map((p) => ({ id: p.id, title: p.title,
         episodeIds: p.episodes.map((ep) => ep.id), shotIds: p.shots.map((s) => s.id), assetIds: p.assets.map((a) => a.id) })),
+      aiTasks: reply.state.aiTasks.slice(0, 20).map(({ id, status, title }) => ({ id, status, title })),
       jobs: reply.state.jobs.slice(0, 20).map((j) => ({ id: j.id, status: j.status, taskId: j.taskId })) })
   }
   const rpc = async (raw: unknown, workspaceRoot?: string) => {
@@ -194,7 +199,7 @@ export async function startPluginServer(options: Options) {
                 yield bytes
               }
             }, writer)
-            uploads.set(uploadId, { file, created: Date.now() })
+            uploads.set(uploadId, { file, name, created: Date.now() })
             sendJson(response, 200, { uploadId })
           } catch (error) { await rm(file, { force: true }); throw error }
           return
@@ -218,7 +223,7 @@ export async function startPluginServer(options: Options) {
             if (!upload) throw new Error('上传文件已失效')
             return upload.file
           })
-          const reply = await runCommand(input.command, files)
+          const reply = await runCommand(input.command, files, input.uploadIds.map((id) => uploads.get(id)!.name))
           if (input.command.type !== 'scriptChatPickFiles')
             for (const uploadId of input.uploadIds) {
               const upload = uploads.get(uploadId)

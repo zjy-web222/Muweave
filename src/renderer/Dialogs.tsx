@@ -11,9 +11,9 @@ import {
   Braces,
   CheckCircle2,
 } from 'lucide-react'
-import { type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
-import { buildPrompt, parseDirector, storyboardImport } from '../shared/director'
-import { Button, Field, Modal, useWorkspace } from './ui'
+import { type AiRequest, type Reply, type Project, type Shot } from '../shared/schema'
+import { buildPrompt, parseDirector } from '../shared/director'
+import { AITaskProgress, Button, Field, Modal, useWorkspace } from './ui'
 
 export function CreateDialog({
   onClose,
@@ -106,6 +106,7 @@ export function GenerationDialog({
   shot,
   assetId,
   slot = 'first',
+  onSubmit,
   onClose,
 }: {
   p: Project
@@ -114,22 +115,33 @@ export function GenerationDialog({
   shot?: Shot
   assetId?: string
   slot?: 'first' | 'last'
+  onSubmit: (request: AiRequest) => Promise<Reply>
   onClose: () => void
 }) {
   const t = useT()
-  const { run, notice } = useWorkspace(),
-    [prompt, setPrompt] = useState(buildPrompt(p, episodeId, kind, shot, assetId)),
+  const ownerId = assetId || shot?.id
+  const imageSlot = assetId ? 'reference' : slot
+  const { run, notice, state } = useWorkspace()
+  const currentTask = state.aiTasks.find((task) => {
+    const request = task.request
+    return request.projectId === p.id && (kind === 'image'
+      ? request.type === 'generateImage' && request.ownerId === ownerId && request.slot === imageSlot
+      : request.type === 'generateText' && request.episodeId === episodeId && request.kind === kind)
+  })
+  const savedPrompt = currentTask && ['queued', 'running'].includes(currentTask.status) && 'prompt' in currentTask.request
+    ? currentTask.request.prompt : undefined
+  const [prompt, setPrompt] = useState(savedPrompt || buildPrompt(p, episodeId, kind, shot, assetId)),
     [raw, setRaw] = useState(''),
     [step, setStep] = useState<'prompt' | 'result'>('prompt'),
-    [generating, setGenerating] = useState(false),
-    [elapsed, setElapsed] = useState(0),
-    [error, setError] = useState('')
+    [submitting, setGenerating] = useState(false)
+  const generating = submitting || currentTask?.status === 'running' || currentTask?.status === 'queued'
+  const queueBusy = state.aiTasks.some((task) => ['queued', 'running'].includes(task.status))
   useEffect(() => {
-    if (!generating || kind !== 'image') return
-    const start = Date.now()
-    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
-    return () => window.clearInterval(timer)
-  }, [generating, kind])
+    if (kind !== 'image' && currentTask?.status === 'succeeded' && currentTask.resultText) {
+      setRaw(currentTask.resultText)
+      setStep('result')
+    }
+  }, [kind, currentTask?.status, currentTask?.resultText])
   let valid = false,
     summary = t('等待生成结果或粘贴 JSON 后预览')
   if (raw.trim())
@@ -144,15 +156,15 @@ export function GenerationDialog({
     <Modal
       title={
         kind === 'image'
-          ? `${t(assetId ? 'AI 生成参考图 ·' : 'ChatGPT 生图 ·')} ${assetId ? p.assets.find((a) => a.id === assetId)?.name : slot === 'last' ? t('尾帧') : t('首帧')}`
-          : t('ChatGPT 创作助手')
+          ? `${t(assetId ? 'AI 生成参考图 ·' : 'AI 生图 ·')} ${assetId ? p.assets.find((a) => a.id === assetId)?.name : slot === 'last' ? t('尾帧') : t('首帧')}`
+          : t('AI 创作助手')
       }
       subtitle={
         kind === 'image'
-          ? t('使用已连接的 ChatGPT 账号，在软件中直接生成并保存图片。')
-          : t('连接 ChatGPT 账号后，文字结果可直接返回软件。')
+          ? t('使用设置中选择的图片模型，直接生成并保存图片。')
+          : t('使用设置中选择的文字模型，生成结果直接返回软件。')
       }
-      onClose={() => !generating && onClose()}
+      onClose={onClose}
       wide
     >
       {kind !== 'image' && <div className="flow-steps">
@@ -173,12 +185,12 @@ export function GenerationDialog({
                 {kind === 'image' ? t(assetId ? '生成后自动设为当前参考图' : '直接生成图片') : t('直接生成文字')}
                 <p>
                   {kind === 'image'
-                    ? t('使用与文字生成相同的 ChatGPT 授权；完成后自动保存为当前镜头或资产的图片素材。')
+                    ? t('使用独立配置的图片服务；完成后自动保存为当前镜头或资产的图片素材。')
                     : t('点击生成后，文字结果会直接返回软件。')}
                 </p>
               </div>
             </div>
-            <Field label={t('发送给 ChatGPT 的提示词')}>
+            <Field label={t('发送给模型的提示词')}>
               <textarea
                 className="prompt-editor"
                 rows={14}
@@ -188,13 +200,12 @@ export function GenerationDialog({
                 onChange={(e) => setPrompt(e.target.value)}
               />
             </Field>
-            {kind === 'image' && generating && (
-              <p className="small muted" role="status">
-                {t('正在生成图片，完成后自动保存，请保持窗口打开。')} {Math.floor(elapsed / 60)}:
-                {String(elapsed % 60).padStart(2, '0')}
-              </p>
+            {currentTask && <AITaskProgress task={currentTask} runningLabel={kind === 'image'
+              ? '正在生成图片，可关闭此窗口，完成后自动保存。' : undefined} />}
+            {kind === 'image' && currentTask?.status === 'succeeded' && (
+              <p className="small" role="status">{t('图片已生成并保存到当前项目素材。')}</p>
             )}
-            {kind === 'image' && error && <p className="danger small" role="alert">{error}</p>}
+            {currentTask?.error && <p className="danger small" role="alert">{t(currentTask.error)}</p>}
           </>
         ) : (
           <>
@@ -227,7 +238,7 @@ export function GenerationDialog({
         )}
       </div>
       <div className="modal-footer">
-        <Button disabled={generating} onClick={onClose}>{t('完成 / 关闭')}</Button>
+        <Button onClick={onClose}>{t('完成 / 关闭')}</Button>
         {step === 'prompt' ? (
           <>
             {kind !== 'image' && (
@@ -237,51 +248,35 @@ export function GenerationDialog({
                 onClick={async () => {
                   setGenerating(true)
                   try {
-                    const r = await run({
+                    await onSubmit({
                       type: 'generateText',
                       projectId: p.id,
                       episodeId,
                       kind,
                       prompt,
                     })
-                    if (r.ok) {
-                      setRaw(r.text || '')
-                      setStep('result')
-                    }
                   } finally {
                     setGenerating(false)
                   }
                 }}
               >
-                {generating ? t('正在生成回复…') : t('在软件中直接生成')}
+                {generating ? t(currentTask?.status === 'queued' ? '排队中' : '正在生成回复…') : t(queueBusy ? '加入 AI 队列' : '在软件中直接生成')}
               </Button>
             )}
             {kind === 'image' && (
               <Button
                 primary
-                disabled={generating || !prompt.trim()}
+                disabled={generating || !prompt.trim() || !ownerId}
                 onClick={async () => {
-                  setError('')
-                  setElapsed(0)
+                  if (!ownerId) return
                   setGenerating(true)
                   try {
-                    const r = await run({
-                      type: 'generateImage',
-                      projectId: p.id,
-                      ownerId: assetId || shot!.id,
-                      prompt: prompt.trim(),
-                      slot: assetId ? 'reference' : slot,
-                    })
-                    if (r.ok) {
-                      notice(t('图片已生成并保存到当前项目素材。'))
-                      onClose()
-                    } else setError(r.error)
-                  } finally {
-                    setGenerating(false)
-                  }
+                    await onSubmit({ type: 'generateImage', projectId: p.id, ownerId,
+                      prompt: prompt.trim(), slot: imageSlot })
+                  } finally { setGenerating(false) }
                 }}
               >
-                {generating ? t('正在生成图片…') : t('在软件中直接生成图片')}
+                {generating ? t(currentTask?.status === 'queued' ? '排队中' : '正在生成图片…') : t(queueBusy ? '加入 AI 队列' : '在软件中直接生成图片')}
               </Button>
             )}
           </>
@@ -308,33 +303,28 @@ export function GenerationDialog({
 export function StoryboardDialog({
   p,
   episodeId,
+  onSubmit,
   onClose,
 }: {
   p: Project
   episodeId: string
+  onSubmit: (request: AiRequest) => Promise<Reply>
   onClose: () => void
 }) {
   const t = useT()
-  const { run, notice } = useWorkspace()
-  const [request, setRequest] = useState('')
-  const [generating, setGenerating] = useState(false)
-  const [elapsed, setElapsed] = useState(0)
-  const [error, setError] = useState('')
+  const { state } = useWorkspace()
+  const task = state.aiTasks.find((task) => task.request.type === 'generateStoryboard' &&
+    task.projectId === p.id && task.request.episodeId === episodeId)
+  const [request, setRequest] = useState(task?.request.type === 'generateStoryboard' && task.status !== 'succeeded' ? task.request.request : '')
+  const [submitting, setGenerating] = useState(false)
+  const generating = submitting || task?.status === 'queued' || task?.status === 'running'
+  const queueBusy = state.aiTasks.some((task) => ['queued', 'running'].includes(task.status))
   const episode = p.episodes.find((item) => item.id === episodeId)
-  useEffect(() => {
-    if (!generating) return
-    const start = Date.now()
-    const timer = window.setInterval(
-      () => setElapsed(Math.floor((Date.now() - start) / 1000)),
-      1000,
-    )
-    return () => window.clearInterval(timer)
-  }, [generating])
   return (
     <Modal
       title={t('AI 生成分镜')}
-      subtitle={t('使用已连接的 ChatGPT 账号生成可编辑的分镜镜头。')}
-      onClose={() => !generating && onClose()}
+      subtitle={t('使用设置中选择的文字模型生成可编辑的分镜镜头。')}
+      onClose={onClose}
     >
       <div className="modal-body">
         <div className="notice">
@@ -354,220 +344,36 @@ export function StoryboardDialog({
             placeholder={t('例如：用 8 个镜头突出主角发现线索的悬念。')}
           />
         </Field>
-        {generating && (
-          <p className="small muted" role="status">
-            {t('正在连接并生成分镜，请保持窗口打开。')} {Math.floor(elapsed / 60)}:
-            {String(elapsed % 60).padStart(2, '0')}
-          </p>
-        )}
-        {error && (
+        {task && <AITaskProgress task={task} runningLabel="正在生成分镜，可关闭窗口继续处理。" />}
+        {task?.error && (
           <p className="danger small" role="alert">
-            {error}
+            {t(task.error)}
           </p>
         )}
       </div>
       <div className="modal-footer">
-        <Button disabled={generating} onClick={onClose}>
-          {t('取消')}
+        <Button onClick={onClose}>
+          {t('关闭')}
         </Button>
         <Button
           primary
           disabled={generating}
           onClick={async () => {
-            setElapsed(0)
             setGenerating(true)
-            setError('')
             try {
-              const prompt = buildPrompt(p, episodeId, 'storyboard')
-              const generated = await run({
-                type: 'generateText',
-                projectId: p.id,
-                episodeId,
-                kind: 'storyboard',
-                prompt: request.trim() ? `${prompt}\n\n用户补充要求：${request.trim()}` : prompt,
-              })
-              if (!generated.ok) return
-              const raw = storyboardImport(generated.text || '')
-              const imported = await run({ type: 'parse', projectId: p.id, episodeId, raw })
-              if (imported.ok) {
-                notice(t('分镜已追加到当前集'))
-                onClose()
-              }
-            } catch (cause) {
-              setError(
-                cause instanceof Error && cause.message === 'AI 未返回分镜镜头，请修改要求后重试。'
-                  ? t(cause.message)
-                  : t('AI 返回的分镜格式无效，请修改要求后重试。'),
-              )
+              await onSubmit({ type: 'generateStoryboard', projectId: p.id, episodeId, request: request.trim() })
             } finally {
               setGenerating(false)
             }
           }}
         >
-          {generating ? t('正在生成分镜…') : t('生成分镜')}
+          {generating ? t(task?.status === 'queued' ? '排队中' : '正在生成分镜…') : t(queueBusy ? '加入 AI 队列' : '生成分镜')}
         </Button>
       </div>
     </Modal>
   )
 }
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
-  const t = useT()
-  const { state, run } = useWorkspace(),
-    [c, setC] = useState<Config>(structuredClone(state.config)),
-    [key, setKey] = useState(''),
-    [output, setOutput] = useState(''),
-    [busy, setBusy] = useState(false),
-    [accountConnected, setAccountConnected] = useState<boolean | null>(null)
-  useEffect(() => {
-    void run({ type: 'codexStatus' }).then((r) => {
-      if (r.ok) setAccountConnected(r.text === 'connected')
-    })
-  }, [run])
-  const patch = (v: Partial<Config>) => setC((o) => ({ ...o, ...v }))
-  async function save() {
-    const r = await run({ type: 'config', config: c, ...(key.trim() ? { key } : {}) })
-    if (r.ok) setKey('')
-    return r.ok
-  }
-  async function test() {
-    setBusy(true)
-    try {
-      if (await save()) {
-        const r = await run({ type: 'testConnection' })
-        setOutput(r.ok ? r.text || r.message || t('完成') : r.error)
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Modal
-      title={t('连接与偏好设置')}
-      subtitle={t('第一版只接入 ChatGPT 与 RunningHub。所有密钥仅保存在本机。')}
-      wide
-      onClose={onClose}
-    >
-      <div className="modal-body settings-body">
-        <section>
-          <h3>
-            <KeyRound size={17} /> {t('ChatGPT 账号 · 文字与图片')}
-          </h3>
-          <div className="row-between">
-            <div>
-              <strong>
-                {accountConnected === null
-                  ? t('正在检查账号…')
-                  : accountConnected
-                    ? t('ChatGPT 账号已连接')
-                    : t('需要连接 ChatGPT 账号')}
-              </strong>
-              <p className="small muted">
-                {t('授权一次后，文字回复和生成图片都会直接保存到软件。')}
-              </p>
-            </div>
-            <Button
-              disabled={busy || accountConnected !== false}
-              onClick={async () => {
-                setBusy(true)
-                try {
-                  const r = await run({ type: 'codexLogin' })
-                  if (r.ok) {
-                    setAccountConnected(true)
-                    window.dispatchEvent(new Event('director:codex-login'))
-                  }
-                } finally {
-                  setBusy(false)
-                }
-              }}
-            >
-              {busy ? t('等待账号授权…') : accountConnected ? t('已连接') : t('连接账号')}
-            </Button>
-          </div>
-        </section>
-        <section>
-          <h3>
-            <KeyRound size={17} /> {t('RunningHub 工作流')}
-          </h3>
-          <p className="small muted">{t('已内置指定工作流，使用 RunningHub 中国站。只接受消耗 RH币的消费级会员 Key，不使用钱包余额。')}</p>
-          <p className="small muted break">{t('工作流：')}{videoWorkflow.id}</p>
-          <Field label={t('视频生成模式')}>
-            <select
-              value={c.instanceType}
-              onChange={(e) => patch({ instanceType: e.target.value as Config['instanceType'] })}
-            >
-              <option value="plus">{t('Plus（48 GB 显存）')}</option>
-              <option value="default">{t('Standard（24 GB 显存）')}</option>
-            </select>
-          </Field>
-          <Field
-            label={`API Key ${state.hasKey ? t('· 已安全保存') : ''}`}
-            hint={t('请填写消费级会员 Key。留空保留原 Key；Key 不回传到界面，不进入 ZIP 存档。')}
-          >
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder={
-                state.hasKey ? t('已绑定；输入新 Key 可替换') : t('粘贴你自己的 RunningHub API Key')
-              }
-            />
-          </Field>
-          <div className="field-row">
-            <Button disabled={busy} onClick={() => void test()}>
-              {t('测试连接')}
-            </Button>
-            {state.hasKey && (
-              <Button onClick={() => void run({ type: 'clearKey' })}>{t('解绑 Key')}</Button>
-            )}
-          </div>
-          {output && <pre className="api-output">{output}</pre>}
-          <Field label={t('同时运行的视频任务')}>
-            <p className="small muted">{t('RH币模式一次运行 1 个视频任务，后续镜头依次提交。')}</p>
-          </Field>
-        </section>
-        <section>
-          <h3>
-            <Film size={17} /> {t('导出与外观')}
-          </h3>
-          <Field label={t('界面主题')}>
-            <select
-              value={c.theme}
-              onChange={(e) => patch({ theme: e.target.value as Config['theme'] })}
-            >
-              <option value="light">{t('浅色 · Warm paper')}</option>
-              <option value="dark">{t('深色 · Graphite')}</option>
-            </select>
-          </Field>
-          <Field label={t('界面语言')}>
-            <select
-              value={c.locale}
-              onChange={(e) => patch({ locale: e.target.value as Config['locale'] })}
-            >
-              <option value="zh">简体中文</option>
-              <option value="en">English</option>
-            </select>
-          </Field>
-          <p className="small muted break">
-            {t('本地资料库：')}
-            {state.dataPath}
-          </p>
-        </section>
-      </div>
-      <div className="modal-footer">
-        <Button onClick={onClose}>{t('关闭')}</Button>
-        <Button
-          primary
-          onClick={async () => {
-            if (await save()) onClose()
-          }}
-        >
-          {t('保存设置')}
-        </Button>
-      </div>
-    </Modal>
-  )
-}
+export { SettingsDialog } from './Settings'
 export function ExportDialog({
   p,
   episodeId,

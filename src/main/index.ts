@@ -19,6 +19,7 @@ import mammoth from 'mammoth'
 import { ZodError } from 'zod'
 import {
   commandSchema,
+  aiRequestSchema,
   configSchema,
   videoWorkflow,
   id,
@@ -26,17 +27,23 @@ import {
   type Reply,
   type Snapshot,
   type ChatAttachment,
+  type AiRequest,
+  type AiTask,
 } from '../shared/schema'
 import {
   buildPrompt,
   buildScriptChatPrompt,
+  getScriptPolishSource,
   parseDirector,
   parseScriptChatReply,
   storyboardResponseJsonSchema,
+  storyboardImport,
 } from '../shared/director'
 import { Store, createProject, replaceEpisodeScript } from './store'
 import { ChatGPT } from './chatgpt'
 import { CodexText } from './codex'
+import { ModelAPI, imageExtension, type ModelCredential } from './models'
+import { credentialId, modelChannelSchema, modelProviders, validateModel, type ModelChannel, type ModelSelection } from '../shared/models'
 import { prepareChatFile } from './chat-files'
 import { Queue, RunningHub, assertCoinOnlyWorkflow, inputsChanged, relevantAssets } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter, episodeRenderVersion } from './media'
@@ -53,7 +60,8 @@ let window: BrowserWindow | null = null,
   store: Store,
   queue: Queue,
   chatgpt: ChatGPT,
-  codex: CodexText
+  codex: CodexText,
+  models: ModelAPI
 const exporter = new Exporter(app.isPackaged ? process.resourcesPath : undefined)
 const pendingChatFiles = new Map<
   string,
@@ -84,15 +92,35 @@ function key() {
     return ''
   }
 }
+function modelCredential(channel: ModelChannel, selection: ModelSelection): ModelCredential {
+  if (selection.provider === 'runninghub') return { key: key() }
+  const value = store.get<string>(`model-key:${credentialId(channel, selection)}`, '')
+  if (!value) return { key: '' }
+  try { return JSON.parse(safeStorage.decryptString(Buffer.from(value, 'base64'))) as ModelCredential }
+  catch { return { key: '' } }
+}
+function credentialStatus() {
+  const result: Record<string, boolean> = {}
+  for (const channel of modelChannelSchema.options)
+    for (const provider of modelProviders[channel])
+      for (const region of ['cn', 'global'] as const) {
+        const selection = { provider, model: '', region }
+        result[credentialId(channel, selection)] = !!modelCredential(channel, selection).key
+      }
+  return result
+}
 function snapshot(): Snapshot {
   return {
     projects: store.projects(),
     jobs: store.jobs(),
+    aiTasks: store.aiTasks(),
     config: store.config(),
     hasKey: !!key(),
     chatgptOpen: !!chatgpt.window,
     dataPath: store.root,
     exporting: exporter.busy,
+    credentials: credentialStatus(),
+    modelServicesReady: true,
   }
 }
 async function chooseSave(defaultPath: string, extensions: string[]) {
@@ -155,8 +183,9 @@ if (primary)
     store = new Store(join(app.getPath('userData'), 'library'))
     chatgpt = new ChatGPT(store, changed)
     codex = new CodexText(store)
+    models = new ModelAPI(modelCredential)
     const api = new RunningHub(key)
-    queue = new Queue(store, api, changed, app.isPackaged ? process.resourcesPath : undefined)
+    queue = new Queue(store, api, changed, app.isPackaged ? process.resourcesPath : undefined, models)
     const mediaFile = (url: URL) => {
         const [pid, mid, revision] = url.pathname.split('/').filter(Boolean)
         id.parse(pid)
@@ -180,11 +209,56 @@ if (primary)
       }
     }
     protocol.handle('media', media)
-    const command = async (raw: unknown): Promise<Reply> => {
+    const enqueueAI = async (request: AiRequest) => {
+      const project = store.project(request.projectId)
+      const episode = 'episodeId' in request ? project.episodes.find((episode) => episode.id === request.episodeId) : undefined
+      if ('episodeId' in request && !episode) throw new Error('集不存在')
+      const owner = request.type === 'generateImage'
+        ? request.slot === 'reference' ? project.assets.find((asset) => asset.id === request.ownerId)
+          : project.shots.find((shot) => shot.id === request.ownerId) : undefined
+      if (request.type === 'generateImage' && !owner) throw new Error('图片所属镜头或资产已不存在')
+      const attachments: ChatAttachment[] = []
+      if (request.type === 'scriptChatGenerate') {
+        if (!request.request.trim() && !request.attachmentIds.length) throw new Error('请输入创作要求或添加附件')
+        for (const id of request.attachmentIds) {
+          const file = pendingChatFiles.get(id)
+          if (!file || file.projectId !== project.id) throw new Error('附件已失效，请重新选择文件')
+          if ((await stat(file.path)).size > 50 * 1024 * 1024) throw new Error('附件已超过 50 MB，请重新选择')
+          const saved = `chat/${id}`
+          await mkdir(store.file(project.id, 'chat'), { recursive: true })
+          await copyFile(file.path, store.file(project.id, saved))
+          attachments.push({ id, name: file.name, size: file.size, file: saved })
+        }
+      }
+      const label = request.type === 'generateImage' ? 'AI 生图' : request.type === 'generateStoryboard' ? 'AI 分镜' :
+        request.type === 'scriptChatGenerate' ? request.polishTurnId ? 'AI 润色' : 'AI 编剧' : 'AI 文字'
+      const target = owner ? 'name' in owner ? owner.name : owner.title : episode?.title
+      return queue.enqueueAI(request, `${label} · ${target || project.title}`, attachments)
+    }
+    const command = async (raw: unknown, executing?: AiTask): Promise<Reply> => {
       try {
         const c = commandSchema.parse(raw)
+        if (!executing) {
+          const request = aiRequestSchema.safeParse(c)
+          if (request.success) {
+            const task = await queue.waitAI(await enqueueAI(request.data))
+            return task.status === 'succeeded' ? { ok: true, state: snapshot(), text: task.resultText, message: task.message }
+              : { ok: false, error: task.error || 'AI 任务已取消' }
+          }
+        }
         let message: string | undefined, text: string | undefined
+        const selection = (channel: ModelChannel) => executing?.model || store.config().models[channel]
+        const generate = (prompt: string, schema?: Record<string, unknown>, options?: { workingDirectory?: string; images?: string[] }) =>
+          selection('text').provider === 'chatgpt' ? codex.generate(prompt, schema, options) :
+            models.text(selection('text'), prompt, schema, options?.images)
         switch (c.type) {
+          case 'aiEnqueue':
+            text = await enqueueAI(c.request)
+            message = 'AI 任务已加入队列，可关闭窗口继续处理。'
+            break
+          case 'aiTask':
+            await queue.aiAction(c.taskId, c.action)
+            break
           case 'snapshot':
             break
           case 'create':
@@ -259,6 +333,14 @@ if (primary)
               ep.scriptChat = [...ep.scriptChat, c.turn]
             })
             break
+          case 'scriptChatPolishDecision':
+            store.update(c.projectId, (p) => {
+              getScriptPolishSource(p, c.episodeId, c.turnId)
+              const turn = p.episodes.find((episode) => episode.id === c.episodeId)!
+                .scriptChat.find((item) => item.id === c.turnId)!
+              turn.polishSkipped = c.skipped
+            })
+            break
           case 'scriptChatPickFiles': {
             store.project(c.projectId)
             const context = commandFiles.getStore()
@@ -267,13 +349,13 @@ if (primary)
             if (selection.canceled) break
             if (selection.filePaths.length > c.max) throw new Error('每轮最多添加 10 个附件')
             const picked = []
-            for (const path of selection.filePaths) {
+            for (const [index, path] of selection.filePaths.entries()) {
               const file = await stat(path)
               if (!file.isFile()) throw new Error('只能上传文件')
               if (file.size > 50 * 1024 * 1024) throw new Error('单个附件不能超过 50 MB')
               const attachment = {
                 id: randomUUID(),
-                name: basename(path).slice(0, 255),
+                name: (context?.names?.[index] || basename(path)).slice(0, 255),
                 size: file.size,
               }
               pendingChatFiles.set(attachment.id, { ...attachment, projectId: c.projectId, path })
@@ -288,7 +370,12 @@ if (primary)
             const p = store.project(c.projectId)
             const ep = p.episodes.find((e) => e.id === c.episodeId)
             if (!ep) throw new Error('集不存在')
+            const currentSource = c.polishTurnId ? getScriptPolishSource(p, c.episodeId, c.polishTurnId) : undefined
+            const polishSource = currentSource ? executing?.polishSource || currentSource : undefined
+            if (polishSource && polishSource.turnId !== c.polishTurnId) throw new Error('润色任务与候选剧本不匹配')
             const files = c.attachmentIds.map((attachmentId) => {
+              const saved = executing?.attachments.find((file) => file.id === attachmentId)
+              if (saved) return { ...saved, projectId: c.projectId, path: store.file(c.projectId, saved.file) }
               const file = pendingChatFiles.get(attachmentId)
               if (!file || file.projectId !== c.projectId)
                 throw new Error('附件已失效，请重新选择文件')
@@ -318,8 +405,9 @@ if (primary)
                 await Promise.all(
                   staged.map((file) => prepareChatFile(file.stagedPath, file.name, file.size)),
                 ),
+                polishSource,
               )
-              const rawReply = await codex.generate(
+              const rawReply = await generate(
                 prompt,
                 {
                   type: 'object',
@@ -327,8 +415,14 @@ if (primary)
                     reply: { type: 'string' },
                     analysis: { type: 'string' },
                     script: { type: 'string' },
+                    polishDirections: { type: 'array', maxItems: 2, items: {
+                      type: 'object', properties: {
+                        title: { type: 'string', minLength: 1, maxLength: 40 },
+                        instruction: { type: 'string', minLength: 1, maxLength: 300 },
+                      }, required: ['title', 'instruction'], additionalProperties: false,
+                    } },
                   },
-                  required: ['reply', 'analysis', 'script'],
+                  required: ['reply', 'analysis', 'script', 'polishDirections'],
                   additionalProperties: false,
                 },
                 {
@@ -339,6 +433,7 @@ if (primary)
                 },
               )
               const reply = parseScriptChatReply(rawReply)
+              if (polishSource && !reply.script?.trim()) throw new Error('AI 未返回润色后的剧本，请手动重试')
               const attachments: ChatAttachment[] = []
               if (staged.length) await mkdir(store.file(c.projectId, 'chat'), { recursive: true })
               for (const file of staged) {
@@ -355,7 +450,7 @@ if (primary)
                   {
                     id: randomUUID(),
                     role: 'user' as const,
-                    text: c.request.trim() || '请分析附件',
+                    text: polishSource ? `润色方向：${c.request.trim()}` : c.request.trim() || '请分析附件',
                     attachments,
                     createdAt: now,
                   },
@@ -365,6 +460,9 @@ if (primary)
                     text: reply.reply.trim() || '已生成剧本草稿',
                     analysis: reply.analysis?.trim() || undefined,
                     script: reply.script?.trim() ? reply.script : undefined,
+                    ...(reply.script?.trim() && reply.polishDirections?.length === 2
+                      ? { polishDirections: reply.polishDirections } : {}),
+                    ...(polishSource ? { polishSourceTurnId: polishSource.turnId } : {}),
                     createdAt: now,
                   },
                 ]
@@ -378,6 +476,12 @@ if (primary)
           case 'codexStatus':
             text = (await codex.connected()) ? 'connected' : 'disconnected'
             break
+          case 'modelStatus': {
+            const selected = store.config().models[c.channel]
+            text = (selected.provider === 'chatgpt' ? await codex.connected() :
+              !!modelCredential(c.channel, selected).key) ? 'connected' : 'disconnected'
+            break
+          }
           case 'codexLogin':
             await codex.login()
             message = 'ChatGPT 账号已连接，可在软件中生成文字和图片。'
@@ -385,10 +489,32 @@ if (primary)
           case 'generateText': {
             const p = store.project(c.projectId)
             if (!p.episodes.some((e) => e.id === c.episodeId)) throw new Error('集不存在')
-            text = await codex.generate(
+            text = await generate(
               c.prompt || buildPrompt(p, c.episodeId, c.kind),
               c.kind === 'storyboard' ? storyboardResponseJsonSchema : undefined,
             )
+            break
+          }
+          case 'generateStoryboard': {
+            const project = store.project(c.projectId)
+            const episode = project.episodes.find((episode) => episode.id === c.episodeId)
+            if (!episode) throw new Error('集不存在')
+            const source = episode.script
+            const prompt = buildPrompt(project, c.episodeId, 'storyboard')
+            const result = await generate(c.request.trim() ? `${prompt}\n\n用户补充要求：${c.request.trim()}` : prompt,
+              storyboardResponseJsonSchema)
+            if (result.length > 200000) throw new Error('AI 结果超过保存上限，请拆分任务后重试')
+            if (executing) {
+              executing.resultText = result
+              store.saveJob(executing)
+            }
+            if (store.project(c.projectId).episodes.find((episode) => episode.id === c.episodeId)?.script !== source)
+              throw new Error('生成期间剧本已变更，分镜结果已保留在任务中心，请核对后导入。')
+            const imported = await command({ type: 'parse', projectId: c.projectId, episodeId: c.episodeId,
+              raw: storyboardImport(result) }, executing)
+            if (!imported.ok) throw new Error(imported.error)
+            text = result
+            message = '分镜已追加到当前集'
             break
           }
           case 'generateImage': {
@@ -398,12 +524,19 @@ if (primary)
             if (!asset && !shot)
               throw new Error('图片所属镜头或资产已不存在')
             const prompt = c.prompt || buildPrompt(p, shot?.episodeId || p.episodes[0]?.id, 'image', shot, asset?.id)
-            const bytes = await codex.image(prompt, p.aspect)
-            const file = store.file(p.id, `downloads/codex-${randomUUID()}.png`)
+            const existing = executing && p.media.find((media) => media.taskId === `ai:${executing.id}`)
+            if (existing) { text = `media://asset/${p.id}/${existing.id}`; break }
+            const selected = selection('image')
+            const bytes = selected.provider === 'chatgpt' ? await codex.image(prompt, p.aspect) :
+              await models.image(selected, prompt, p.aspect, executing?.remoteTaskId, (taskId, queryUrl) => {
+                if (executing) { executing.remoteTaskId = taskId; executing.remoteQueryUrl = queryUrl; store.saveJob(executing); changed() }
+              }, executing?.remoteQueryUrl)
+            const file = store.file(p.id, `downloads/ai-${randomUUID()}.${imageExtension(bytes)}`)
             await mkdir(store.file(p.id, 'downloads'), { recursive: true })
             await writeFile(file, bytes)
             try {
-              const media = await importMedia(store, p.id, c.ownerId, c.slot, file, prompt)
+              const media = await importMedia(store, p.id, c.ownerId, c.slot, file, prompt,
+                executing ? `ai:${executing.id}` : undefined)
               text = `media://asset/${p.id}/${media.id}`
             } finally {
               await rm(file, { force: true })
@@ -634,6 +767,15 @@ if (primary)
                 safeStorage.encryptString(c.key.trim()).toString('base64'),
               )
             }
+            const encrypted = (c.credentials || []).map((item) => {
+              validateModel(item.channel, item.selection)
+              if (['chatgpt', 'runninghub'].includes(item.selection.provider)) throw new Error('请使用此服务的专用授权入口')
+              if (!safeStorage.isEncryptionAvailable()) throw new Error('操作系统凭据加密不可用，未保存 API Key')
+              return { id: credentialId(item.channel, item.selection), value: safeStorage.encryptString(
+                JSON.stringify({ key: item.key, ...(item.secret ? { secret: item.secret } : {}) }),
+              ).toString('base64') }
+            })
+            for (const credential of encrypted) store.set(`model-key:${credential.id}`, credential.value)
             store.set('config', config)
             message = '设置已保存，Key 不会进入项目存档'
             break
@@ -641,6 +783,16 @@ if (primary)
           case 'clearKey':
             store.set('runninghub-key', '')
             break
+          case 'clearModelKey':
+            validateModel(c.channel, c.selection)
+            store.set(`model-key:${credentialId(c.channel, c.selection)}`, '')
+            break
+          case 'testModelConnection': {
+            const selected = store.config().models[c.channel]
+            text = selected.provider === 'chatgpt' ? (await codex.connected() ? 'ChatGPT 账号已连接' : '需要连接 ChatGPT 账号') :
+              await models.test(c.channel, selected)
+            break
+          }
           case 'testConnection':
             {
               const account = await api.coinAccount(videoWorkflow.site)
@@ -653,10 +805,13 @@ if (primary)
             text = JSON.stringify(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }), null, 2)
             break
           case 'queue':
-            if (!key()) throw new Error('请先绑定 RunningHub Key')
             {
-              await api.coinAccount(videoWorkflow.site)
-              assertCoinOnlyWorkflow(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }))
+              const selected = store.config().models.video
+              if (!modelCredential('video', selected).key) throw new Error('请先保存视频服务的 Key')
+              if (selected.provider === 'runninghub') {
+                await api.coinAccount(videoWorkflow.site)
+                assertCoinOnlyWorkflow(await api.workflow({ site: videoWorkflow.site, workflowId: videoWorkflow.id }))
+              }
               const adjusted = queue.enqueue(c.projectId, c.shotIds, c.stopOnFailure)
               message = adjusted
                 ? `已加入视频任务队列；${adjusted} 个镜头已自动延长到模型或对白所需时长`
@@ -797,6 +952,11 @@ if (primary)
         }
       }
     }
+    queue.setAIProcessor(async (task) => {
+      const reply = await command(task.request, task)
+      if (!reply.ok) throw new Error(reply.error)
+      return { text: reply.text, message: reply.message }
+    })
     ipcMain.handle('director:command', async (event, raw): Promise<Reply> => {
       if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame)
         return { ok: false, error: '不允许的调用来源' }

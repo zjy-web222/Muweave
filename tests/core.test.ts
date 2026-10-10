@@ -47,7 +47,7 @@ describe('local project state', () => {
     expect(commandSchema.parse({type:'generateImage', projectId:p.id, ownerId:asset.id, slot:'reference'}))
       .toMatchObject({slot:'reference', ownerId:asset.id})
     const prompt = buildPrompt(p, p.episodes[0].id, 'image', undefined, asset.id)
-    expect(prompt).toContain(asset.name)
+    expect(prompt).toBe(asset.prompt)
     const image = join(root, 'generated.png')
     await writeFile(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64'))
     const media = await importMedia(store, p.id, asset.id, 'reference', image, prompt)
@@ -421,13 +421,13 @@ describe('local project state', () => {
         ],
         { windowsHide: true },
       )
-    const plain = pixels(0.5, 'crop=96:96:32:ih-128')
+    const plain = pixels(0.5, 'crop=160:48:32:ih-80')
     for (const time of [0.5, 1.5, 2.5]) {
-      const marked = pixels(time, 'crop=96:96:iw-128:ih-128')
-      expect(marked.length).toBe(96 * 96 * 3)
+      const marked = pixels(time, 'crop=160:48:iw-192:ih-80')
+      expect(marked.length).toBe(160 * 48 * 3)
       expect(
         marked.filter((value, index) => Math.abs(value - plain[index]) > 20).length,
-      ).toBeGreaterThan(marked.length / 2)
+      ).toBeGreaterThan(marked.length * 0.05)
       const red = marked.filter((_, index) => index % 3 === 0)
       expect(Math.max(...red) - Math.min(...red)).toBeGreaterThan(50)
     }
@@ -738,6 +738,22 @@ describe('safe paid-job lifecycle', () => {
     expect(videoPromptWithAssets(p, p.shots[0], false, false)).toContain('no dialogue or voiceover')
     expect(inputsChanged({ ...shot, dialogue: '新台词' }, shot)).toBe(true)
   })
+  it('binds reference voices only to matching speakers without repeating preceding dialogue', () => {
+    const p = createProject('voice continuity', '16:9', true)
+    const previous = { ...p.shots[0], speaker: '林舟', dialogue: '先等一下。' }
+    const shot = { ...p.shots[1], speaker: '林舟' }
+    const labels = ['上一镜头末帧', '人物林舟']
+    const prompt = videoPromptWithAssets(p, shot, true, true, labels, true, previous)
+    expect(prompt).toContain('<Audio 1> is the synchronized audio track of <Video 1>')
+    expect(prompt).toContain('林舟 (S1) uses the same voice timbre')
+    expect(prompt).toContain('begin from <Picture 1>')
+    expect(prompt).toContain('<d>[Chinese] 如果你还记得，今晚十一点。</d>')
+    expect(prompt).not.toContain(previous.dialogue)
+    const otherSpeaker = videoPromptWithAssets(p, { ...shot, speaker: '陈默', dialogue: '你先说。' }, true, true, labels, true, previous)
+    expect(otherSpeaker).not.toContain('uses the same voice timbre and delivery heard')
+    expect(otherSpeaker).toContain('<d>[Chinese] 你先说。</d>')
+    expect(videoPromptWithAssets(p, shot, true, true, labels, true)).not.toContain('<Audio 1>')
+  })
   it('chains shots in one scene and treats a new scene as a cut', () => {
     const p = createProject('scenes', '16:9', true)
     expect(sameScene(p.shots[0], p.shots[1], p)).toBe(true)
@@ -804,9 +820,53 @@ describe('safe paid-job lifecycle', () => {
       workflow: vi.fn().mockResolvedValue({ '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: { prompt: '', length: 5 } } }),
       start: vi.fn().mockResolvedValue('789'),
     } as unknown as RunningHub
-    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[0].id, p.shots[1].id], false)
+    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[1].id, p.shots[0].id], false)
     await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
     expect(store.jobs().find((j) => j.shotId === p.shots[1].id)).toMatchObject({ status: 'queued' })
+    expect(store.jobs().filter((j) => j.status === 'running').map((j) => j.shotId)).toEqual([p.shots[0].id])
+  })
+  it('orders a batch by episodes and shots rather than incoming selection order', () => {
+    const p = createProject('ordered batch', '16:9', true)
+    const secondEpisode = { ...p.episodes[0], id: 'second-episode', title: '第二集', scriptChat: [] }
+    p.episodes.push(secondEpisode)
+    const secondEpisodeShot = { ...blankShot(secondEpisode.id), action: '新场景的开场', scene: '山顶·外·日' }
+    p.shots.unshift(secondEpisodeShot)
+    store.save(p)
+    store.set('config', { ...defaultConfig, paused: true })
+    const firstEpisodeShots = p.shots.filter((shot) => shot.episodeId === p.episodes[0].id)
+    const queue = new Queue(store, {} as RunningHub, () => {})
+    queue.enqueue(p.id, [secondEpisodeShot.id, firstEpisodeShots[1].id, firstEpisodeShots[0].id], false)
+    expect(store.jobs().reverse().map((job) => job.shotId))
+      .toEqual([firstEpisodeShots[0].id, firstEpisodeShots[1].id, secondEpisodeShot.id])
+  })
+  it('does not bypass an earlier paused shot in the same batch even across a scene cut', async () => {
+    const p = store.save(createProject('paused batch order', '16:9', true))
+    store.set('config', { ...defaultConfig, paused: true })
+    const api = {
+      workflow: vi.fn().mockResolvedValue({ '17': { class_type: 'MiniMaxH3ImageToVideo', inputs: {} } }),
+      start: vi.fn().mockResolvedValue('ordered-next'),
+    } as unknown as RunningHub
+    const queue = new Queue(store, api, () => {})
+    queue.enqueue(p.id, [p.shots[3].id, p.shots[0].id], false)
+    const earlier = store.jobs().find((job) => job.shotId === p.shots[0].id)!
+    earlier.status = 'paused'
+    store.saveJob(earlier)
+    store.set('config', { ...defaultConfig, paused: false })
+    queue.start()
+    try {
+      await vi.waitFor(() => expect(store.jobs().find((job) => job.shotId === p.shots[3].id)?.error)
+        .toContain('等待同批较早镜头'))
+      expect(api.start).not.toHaveBeenCalled()
+      earlier.status = 'succeeded'
+      store.saveJob(earlier)
+      queue.stop()
+      const restarted = new Queue(store, api, () => {})
+      restarted.start()
+      try {
+        await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
+        expect(store.jobs().find((job) => job.shotId === p.shots[3].id)?.status).toBe('running')
+      } finally { restarted.stop() }
+    } finally { queue.stop() }
   })
   it('marks later videos stale when an earlier shot video changes', async () => {
     const p = store.save(createProject('stale sequence', '16:9', true))
@@ -845,6 +905,37 @@ describe('safe paid-job lifecycle', () => {
     expect(graph['17'].inputs.first_frame).toEqual(['18', 0])
     expect(graph['17'].inputs.prompt).toContain('Continue the same action immediately')
     expect(store.jobs()[0].previousShotId).toBe(p.shots[0].id)
+  }, 15000)
+  it.each([true, false])('preserves available reference audio and handles silent predecessor videos (audio=%s)', async (withAudio) => {
+    const p = createProject('multimodal continuity', '16:9', true)
+    p.shots[0].speaker = '林舟'
+    p.shots[0].dialogue = '先等一下。'
+    p.shots[1].speaker = '林舟'
+    store.save(p)
+    const video = join(root, 'previous.mp4')
+    execFileSync('ffmpeg', [
+      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x180:r=24',
+      ...(withAudio ? ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=32000', '-c:a', 'aac'] : []),
+      '-t', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', video,
+    ], { windowsHide: true })
+    await importMedia(store, p.id, p.shots[0].id, 'video', video)
+    const api = {
+      workflow: vi.fn().mockResolvedValue(directorRef2vaGraph),
+      upload: vi.fn().mockImplementation(async (_site: string, file: string) => file.split(/[\\/]/).at(-1)),
+      start: vi.fn().mockResolvedValue('audio-chain'),
+    } as unknown as RunningHub
+    new Queue(store, api, () => {}).enqueue(p.id, [p.shots[1].id], false)
+    await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1), { timeout: 10000 })
+    const graph = vi.mocked(api.start).mock.calls[0][2]!
+    const loadVideo = Object.values(graph).find((node) => node.class_type === 'LoadVideo')!
+    const reference = Object.values(graph).find((node) => node.class_type === 'RHMiniMaxH3Ref2VAVideoReference')!
+    expect(loadVideo.inputs.keep_audio).toBe(withAudio)
+    expect(reference.inputs.reference_type).toBe(withAudio ? 'video_audio' : 'video')
+    const prompt = String(graph['13'].inputs.prompt)
+    expect(prompt).toContain('begin from <Picture 1>')
+    expect(prompt.includes('<Audio 1>')).toBe(withAudio)
+    expect(prompt).not.toContain(p.shots[0].dialogue)
+    assertCoinOnlyWorkflow(graph)
   }, 15000)
   it('never resubmits an interrupted submission when restarting', async () => {
     const j = makeJob('submitting')

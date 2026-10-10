@@ -1,4 +1,6 @@
 import { useT } from './i18n'
+import { providerNames } from '../shared/models'
+import { ScriptPolishOptions } from './ScriptPolish'
 import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from 'react'
 import {
   Plus,
@@ -23,22 +25,24 @@ import {
   ChevronRight,
   Paperclip,
 } from 'lucide-react'
-import { mediaUrl, type Asset, type Job, type Project, type Shot } from '../shared/schema'
-import { Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versions } from './ui'
+import { mediaUrl, type AiTask, type Asset, type Job, type Project, type Shot } from '../shared/schema'
+import { AITaskProgress, Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versions } from './ui'
 
 export function ScriptEditor({
   p,
+  active,
   episodeId,
   onEpisodeChange,
   beforeEpisodeChange,
 }: {
   p: Project
+  active: boolean
   episodeId: string
   onEpisodeChange: (id: string) => Promise<void>
   beforeEpisodeChange: MutableRefObject<(() => Promise<boolean>) | null>
 }) {
   const t = useT()
-  const { run, notice } = useWorkspace(),
+  const { run, notice, state } = useWorkspace(),
     ep = p.episodes.find((e) => e.id === episodeId)!,
     episodeIndex = p.episodes.findIndex((e) => e.id === episodeId),
     [script, setScript] = useState(ep.script),
@@ -50,6 +54,8 @@ export function ScriptEditor({
     [accountConnected, setAccountConnected] = useState<boolean | null | 'error'>(null)
   const draftRef = useRef({ episodeId, title: ep.title, script: ep.script, dirty: false })
   const historyRef = useRef<HTMLDivElement>(null)
+  const chatTasks = state.aiTasks.filter((task) => task.projectId === p.id && task.request.type === 'scriptChatGenerate')
+  const pendingChat = chatTasks.filter((task) => ['queued', 'running', 'failed', 'cancelled'].includes(task.status)).reverse()
   const turns = p.episodes
     .flatMap((episode, index) =>
       episode.scriptChat.map((turn, order) => ({ episode, index, order, turn })),
@@ -68,14 +74,14 @@ export function ScriptEditor({
   }, [ep.id, ep.script, ep.title])
   useEffect(() => {
     const refresh = () => {
-      void run({ type: 'codexStatus' }).then((r) => {
+      void run(state.modelServicesReady ? { type: 'modelStatus', channel: 'text' } : { type: 'codexStatus' }).then((r) => {
         setAccountConnected(r.ok ? r.text === 'connected' : 'error')
       })
     }
     refresh()
     window.addEventListener('director:codex-login', refresh)
     return () => window.removeEventListener('director:codex-login', refresh)
-  }, [p.id, run])
+  }, [p.id, run, state.modelServicesReady, state.config.models.text.provider, state.config.models.text.model, state.config.models.text.region, JSON.stringify(state.credentials)])
   async function save() {
     const draft = { ...draftRef.current }
     const r = await run({ type: 'episode', projectId: p.id, episodeId: draft.episodeId,
@@ -97,8 +103,8 @@ export function ScriptEditor({
     }
   }, [beforeEpisodeChange])
   useEffect(() => {
-    if (historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
-  }, [turns.length, p.id])
+    if (active && historyRef.current) historyRef.current.scrollTop = historyRef.current.scrollHeight
+  }, [active, turns.length, pendingChat.length, p.id])
   async function pickFiles() {
     if (attachedFiles.length >= 10) return
     const r = await run({
@@ -118,11 +124,9 @@ export function ScriptEditor({
     try {
       if (draftRef.current.dirty && !(await save())) return
       const generated = await run({
-        type: 'scriptChatGenerate',
-        projectId: p.id,
-        episodeId,
-        request,
-        attachmentIds: attachedFiles.map((file) => file.id),
+        type: 'aiEnqueue',
+        request: { type: 'scriptChatGenerate', projectId: p.id, episodeId, request,
+          attachmentIds: attachedFiles.map((file) => file.id) },
       })
       if (generated.ok) {
         setChatRequest('')
@@ -157,14 +161,15 @@ export function ScriptEditor({
     }
   }
   useEffect(() => {
+    if (!active) return
     const handler = () => {
       void save()
     }
     window.addEventListener('director:save', handler)
     return () => window.removeEventListener('director:save', handler)
-  }, [script, title])
+  }, [active, script, title])
   return (
-    <div className="script-view">
+    <div className="script-view" hidden={!active}>
       <div className="page-heading">
         <div>
           <span className="eyebrow">STORY DEVELOPMENT</span>
@@ -240,7 +245,7 @@ export function ScriptEditor({
               <h3>{t('AI 编剧对话')}</h3>
             </div>
             <span className="small muted">
-              {turns.length} {t('条项目对话')}
+              {turns.length + pendingChat.length} {t('条项目对话')}
             </span>
           </div>
           <p className="small muted">
@@ -252,10 +257,10 @@ export function ScriptEditor({
               {accountConnected === null
                 ? t('正在检查账号…')
                 : accountConnected === true
-                  ? t('ChatGPT 账号已连接')
+                  ? `${t(providerNames[state.config.models.text.provider])} · ${t('已连接')}`
                   : accountConnected === 'error'
                     ? t('账号检查失败，请重试')
-                    : t('需要连接 ChatGPT 账号')}
+                    : t(state.config.models.text.provider === 'chatgpt' ? '需要连接 ChatGPT 账号' : '需要配置文字模型 Key')}
             </span>
             {accountConnected === 'error' && (
               <Button onClick={() => window.dispatchEvent(new Event('director:codex-login'))}>
@@ -268,6 +273,7 @@ export function ScriptEditor({
                 onClick={async () => {
                   setChatBusy(true)
                   try {
+                    if (state.config.models.text.provider !== 'chatgpt') { window.dispatchEvent(new Event('director:open-settings')); return }
                     const r = await run({ type: 'codexLogin' })
                     if (r.ok) setAccountConnected(true)
                   } finally {
@@ -280,13 +286,13 @@ export function ScriptEditor({
             )}
           </div>
           <div className="script-chat-history" aria-label={t('对话记录')} ref={historyRef}>
-            {turns.length === 0 ? (
+            {turns.length === 0 && !pendingChat.length ? (
               <p className="small muted">{t('还没有对话。可以从人物、冲突或下一场戏开始。')}</p>
             ) : (
               turns.map(({ episode, turn }) => (
                 <article className={`script-chat-turn ${turn.role}`} key={turn.id}>
                   <div className="script-chat-turn-meta">
-                    <strong>{turn.role === 'user' ? t('你') : t('AI 编剧')}</strong>
+                    <strong>{turn.role === 'user' ? t('你') : turn.polishSourceTurnId ? t('AI 润色') : t('AI 编剧')}</strong>
                     <span>{episode.title}</span>
                   </div>
                   <p>{turn.text}</p>
@@ -320,11 +326,26 @@ export function ScriptEditor({
                       >
                         {turn.script === episode.script ? t('已应用') : t('应用到剧本')}
                       </Button>
+                      {turn.role === 'assistant' && <ScriptPolishOptions projectId={p.id}
+                        episodeId={episode.id} turn={turn} disabled={chatBusy} />}
                     </div>
                   )}
                 </article>
               ))
             )}
+            {pendingChat.map((task) => task.request.type === 'scriptChatGenerate' && (
+              <article className="script-chat-turn user" key={task.id}>
+                <div className="script-chat-turn-meta"><strong>{t('你')}</strong>
+                  <span>{p.episodes.find((episode) => task.request.type === 'scriptChatGenerate' && episode.id === task.request.episodeId)?.title}</span></div>
+                <p>{task.request.polishTurnId ? `${t('润色方向')}：${task.request.request}` : task.request.request || t('请分析附件')}</p>
+                {!!task.attachments.length && <p>{task.attachments.map((file) => file.name).join(' · ')}</p>}
+                <AITaskProgress task={task} runningLabel={task.request.polishTurnId ? 'AI 正在润色剧本…' : 'AI 正在分析并生成回复…'} />
+                {task.error && <p className="danger" role="alert">{t(task.error)}</p>}
+                {task.status === 'cancelled' && <p>{t('已取消')}</p>}
+                {task.status === 'queued' && <Button onClick={() => void run({ type: 'aiTask', taskId: task.id, action: 'cancel' })}>{t('取消排队')}</Button>}
+                {task.status === 'failed' && <Button onClick={() => void run({ type: 'aiTask', taskId: task.id, action: 'retry' })}>{t('手动重试')}</Button>}
+              </article>
+            ))}
           </div>
           {chatBusy && (
             <p className="script-chat-working">
@@ -801,31 +822,52 @@ export function CutView({
     </div>
   )
 }
-export function Tasks({ jobs, onClose }: { jobs: Job[]; onClose: () => void }) {
+export function Tasks({ jobs, aiTasks, onClose }: { jobs: Job[]; aiTasks: AiTask[]; onClose: () => void }) {
   const t = useT()
   const { run, state } = useWorkspace(),
     [attach, setAttach] = useState<Job | null>(null),
     [taskId, setTaskId] = useState(''),
     [confirm, setConfirm] = useState<{ job: Job; action: 'retry' | 'cancel' } | null>(null)
+  const orderedAI = [
+    ...aiTasks.filter((task) => task.status === 'running'),
+    ...aiTasks.filter((task) => task.status === 'queued').reverse(),
+    ...aiTasks.filter((task) => !['queued', 'running'].includes(task.status)),
+  ]
   return (
     <Modal
       title={t('任务中心')}
-      subtitle={t('暂停只停止新提交。远端已生成的任务可在应用重启后继续查询。')}
+      subtitle={t('暂停只停止新任务；AI 中断后需核对重试，视频任务可凭远端 ID 恢复查询。')}
       wide
       onClose={onClose}
     >
       <div className="modal-body">
         <div className="row-between">
           <span className="muted">
-            {jobs.length} {t('条本地记录')}
+            {jobs.length + aiTasks.length} {t('条本地记录')}
           </span>
           <Button onClick={() => void run({ type: 'pause', paused: !state.config.paused })}>
             {state.config.paused ? <Play size={14} /> : <Pause size={14} />}{' '}
             {state.config.paused ? t('继续队列') : t('暂停队列')}
           </Button>
         </div>
-        {!jobs.length ? (
-          <Empty heading={t('队列很安静')}>{t('在导演画布生成一个视频，任务会出现在这里。')}</Empty>
+        {aiTasks.length > 0 && <div className="job-list">
+          {orderedAI.map((task) => <article className="job" key={task.id}>
+            <div className="row-between"><strong>{t(task.title.split(' · ')[0])} · {task.title.split(' · ').slice(1).join(' · ')}</strong>
+              <span className={`status ${task.status}`}>{t(task.status === 'queued' ? '排队中' : task.status === 'running' ? '生成中' : statusNames[task.status])}</span></div>
+            <p className="small muted">{state.projects.find((project) => project.id === task.projectId)?.title} · {new Date(task.createdAt).toLocaleString()}</p>
+            {task.model && <p className="small muted">{t(providerNames[task.model.provider])} {task.model.model}</p>}
+            {task.remoteTaskId && <p className="small muted break">Task ID: {task.remoteTaskId}</p>}
+            <AITaskProgress task={task} />
+            {task.error && <p className="job-error" role="alert">{t(task.error)}</p>}
+            {task.resultText && <details><summary>{t('查看生成结果')}</summary><pre className="prompt-editor">{task.resultText}</pre></details>}
+            <div className="field-row">
+              {task.status === 'queued' && <Button onClick={() => void run({ type: 'aiTask', taskId: task.id, action: 'cancel' })}>{t('取消排队')}</Button>}
+              {['failed', 'cancelled'].includes(task.status) && <Button onClick={() => void run({ type: 'aiTask', taskId: task.id, action: 'retry' })}>{t(task.remoteTaskId ? '继续查询原任务' : '核对后手动重试')}</Button>}
+            </div>
+          </article>)}
+        </div>}
+        {!jobs.length && !aiTasks.length ? (
+          <Empty heading={t('队列很安静')}>{t('提交 AI 生成或视频任务后会显示在这里。')}</Empty>
         ) : (
           <div className="job-list">
             {jobs.map((j) => (
@@ -836,7 +878,8 @@ export function Tasks({ jobs, onClose }: { jobs: Job[]; onClose: () => void }) {
                 </div>
                 <p className="small muted">
                   {new Date(j.createdAt).toLocaleString()} · workflow {j.workflowId}
-                  {j.instanceType && ` · ${j.instanceType === 'plus' ? 'Plus' : 'Standard'}`}
+                  {j.model && ` · ${t(providerNames[j.model.provider])}${j.model.model ? ` / ${j.model.model}` : ''}`}
+                  {(!j.model || j.model.provider === 'runninghub') && j.instanceType && ` · ${j.instanceType === 'plus' ? 'Plus' : 'Standard'}`}
                 </p>
                 {j.taskId && <p className="mono small break">Task ID: {j.taskId}</p>}
                 {j.error && <p className="job-error">{t(j.error)}</p>}
@@ -881,14 +924,14 @@ export function Tasks({ jobs, onClose }: { jobs: Job[]; onClose: () => void }) {
       {attach && (
         <Modal
           title={t('绑定已有任务')}
-          subtitle={t('在 RunningHub 任务记录中核实镜头、时间和工作流，再粘贴对应 ID。')}
+          subtitle={t('在所用服务商任务记录中核实镜头、时间和模型，再粘贴对应 ID。')}
           onClose={() => setAttach(null)}
         >
           <div className="modal-body">
             <Field label="Task ID">
               <input
                 value={taskId}
-                onChange={(e) => setTaskId(e.target.value.replace(/\D/g, ''))}
+                onChange={(e) => setTaskId(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
               />
             </Field>
           </div>
@@ -915,13 +958,13 @@ export function Tasks({ jobs, onClose }: { jobs: Job[]; onClose: () => void }) {
             <p>
               {confirm.action === 'retry'
                 ? t(
-                    '这会发起新的 RunningHub 任务，可能再次计费。确认原任务已结束，或确实需要重新生成。',
+                    '这会发起新的视频任务，可能再次计费。确认原任务已结束，或确实需要重新生成。',
                   )
                 : confirm.job.status === 'uncertain'
                   ? t(
-                      '原提交结果不确定。必须先在 RunningHub 核实并处理可能存在的任务；此操作仅关闭本地待核实记录，不保证远端取消。',
+                      '原提交结果不确定。必须先在所用服务商核实并处理可能存在的任务；此操作仅关闭本地待核实记录，不保证远端取消。',
                     )
-                  : t('已产生的远端计算费用以 RunningHub 为准。提交中的任务需要先等待返回 ID。')}
+                  : t('已产生的费用以所用服务商为准。提交中的任务需要先等待返回 ID。')}
             </p>
           </div>
           <div className="modal-footer">

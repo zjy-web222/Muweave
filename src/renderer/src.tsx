@@ -41,9 +41,13 @@ import {
   type Reply,
   type Shot,
   type Snapshot,
+  type AiRequest,
   videoWorkflow,
+  replySchema,
 } from '../shared/schema'
 import { minimumDialogueDuration } from '../shared/director'
+import { planVideoContinuity } from '../shared/continuity'
+import { credentialId, providerNames } from '../shared/models'
 import { Button, Empty, Modal, Field, Preview, Workspace, Working } from './ui'
 import Canvas from './Canvas'
 import Inspector from './Inspector'
@@ -80,6 +84,7 @@ function commandError(message: string) {
 function App() {
   const [state, setState] = useState<Snapshot | null>(null),
     [chatgptConnected, setChatgptConnected] = useState(false),
+    [imageConnected, setImageConnected] = useState(false),
     [pid, setPid] = useState(''),
     [epid, setEpid] = useState(''),
     [selected, setSelected] = useState(''),
@@ -94,6 +99,7 @@ function App() {
     [exporting, setExporting] = useState(false),
     [tasks, setTasks] = useState(false),
     [generator, setGenerator] = useState<Generator | null>(null),
+    [generatorTask, setGeneratorTask] = useState<{ id: string; dialog: Generator | null } | null>(null),
     [confirm, setConfirm] = useState<{
       title: string
       text: string
@@ -122,7 +128,7 @@ function App() {
   const run = useCallback(
     async (c: Command): Promise<Reply> => {
       try {
-        const r = await window.director.command(c)
+        const r = replySchema.parse(await window.director.command(c))
         if (r.ok) {
           setState(r.state)
           if (r.message) notice(r.message)
@@ -136,6 +142,22 @@ function App() {
     },
     [notice],
   )
+  async function submitAI(request: AiRequest) {
+    const dialog = generator
+    const reply = await run({ type: 'aiEnqueue', request })
+    if (reply.ok && reply.text) setGeneratorTask({ id: reply.text, dialog })
+    return reply
+  }
+  useEffect(() => {
+    if (!generatorTask) return
+    const task = state?.aiTasks.find((task) => task.id === generatorTask.id)
+    if (task?.status === 'succeeded') {
+      notice(t(task.message || 'AI 任务已完成'))
+      if (generatorTask.dialog?.kind === 'image' || generatorTask.dialog?.kind === 'storyboard')
+        setGenerator((current) => current === generatorTask.dialog ? null : current)
+      setGeneratorTask(null)
+    }
+  }, [state?.aiTasks, generatorTask, notice])
   useEffect(() => {
     void run({ type: 'snapshot' })
     return window.director.onChange(() => {
@@ -144,17 +166,46 @@ function App() {
   }, [run])
   useEffect(() => {
     const refresh = () => {
-      void run({ type: 'codexStatus' }).then((reply) =>
+      void run(state?.modelServicesReady ? { type: 'modelStatus', channel: 'text' } : { type: 'codexStatus' }).then((reply) =>
         setChatgptConnected(reply.ok && reply.text === 'connected'),
+      )
+      void run(state?.modelServicesReady ? { type: 'modelStatus', channel: 'image' } : { type: 'codexStatus' }).then((reply) =>
+        setImageConnected(reply.ok && reply.text === 'connected'),
       )
     }
     refresh()
     window.addEventListener('director:codex-login', refresh)
     return () => window.removeEventListener('director:codex-login', refresh)
-  }, [run])
+  }, [run, state?.modelServicesReady, JSON.stringify(state?.config.models), JSON.stringify(state?.credentials)])
+  useEffect(() => {
+    const show = () => setSettings(true)
+    window.addEventListener('director:open-settings', show)
+    return () => window.removeEventListener('director:open-settings', show)
+  }, [])
   const p = state?.projects.find((p) => p.id === pid) || state?.projects[0],
     episodeId = p?.episodes.find((e) => e.id === epid)?.id || p?.episodes[0]?.id || '',
     episode = p?.episodes.find((e) => e.id === episodeId)
+  const aiTasks = state?.aiTasks || []
+  const videoKeyReady = !!state && (state.config.models.video.provider === 'runninghub' ? state.hasKey :
+    !!state.credentials[credentialId('video', state.config.models.video)])
+  const pendingAI = aiTasks.filter((task) => ['queued', 'running'].includes(task.status))
+  const currentAI = pendingAI.find((task) => task.status === 'running') || pendingAI.at(-1)
+  async function showAIGeneration() {
+    if (!currentAI) return
+    const request = currentAI.request, project = state?.projects.find((project) => project.id === request.projectId)
+    if (!project) return
+    if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current())) return
+    setPid(project.id)
+    if ('episodeId' in request) setEpid(request.episodeId)
+    if (request.type === 'generateImage') {
+      const shot = project.shots.find((shot) => shot.id === request.ownerId)
+      if (shot) setEpid(shot.episodeId)
+      setGenerator({ kind: 'image', assetId: request.slot === 'reference' ? request.ownerId : undefined,
+        shot, slot: request.slot === 'last' ? 'last' : 'first' })
+    } else if (request.type === 'generateStoryboard') setGenerator({ kind: 'storyboard' })
+    else if (request.type === 'scriptChatGenerate') { setStage('script'); setGenerator(null) }
+    else setGenerator({ kind: request.kind === 'storyboard' ? 'storyboard' : request.kind })
+  }
   async function changeEpisode(nextId: string) {
     if (nextId === episodeId) return
     if (beforeEpisodeChange.current && !(await beforeEpisodeChange.current())) return
@@ -167,9 +218,9 @@ function App() {
     shot = shots.find((s) => s.id === selected) || shots[0],
     jobs = state?.jobs.filter((j) => j.projectId === p?.id) || [],
     activeJobs =
-      state?.jobs.filter((j) =>
+      [...(state?.jobs.filter((j) =>
         ['queued', 'running', 'submitting', 'downloading'].includes(j.status),
-      ) || []
+      ) || []), ...pendingAI]
   const batchTiming = shots.filter((item) => batch?.includes(item.id)).map((item) => ({
     shot: item,
     required: minimumDialogueDuration(item.dialogue),
@@ -203,6 +254,14 @@ function App() {
   }, [])
   const image = useCallback((s: Shot) => setGenerator({ kind: 'image', shot: s }), [])
   const video = useCallback((s: Shot) => setBatch([s.id]), [])
+  const deleteShot = (s: Shot) => {
+    if (!p) return
+    setConfirm({
+      title: t('移除这个镜头？'),
+      text: `${s.title} · ${t('镜头将从分镜列表移除，素材文件和历史版本会保留。')}`,
+      run: () => run({ type: 'deleteShot', projectId: p.id, shotId: s.id }),
+    })
+  }
   const layout = useCallback(
     (layout: Project['layout'], viewport?: Project['viewport']) => {
       if (p) void run({ type: 'layout', projectId: p.id, layout, viewport })
@@ -494,6 +553,17 @@ function App() {
                 )}
               </div>
             </header>
+            {currentAI && (
+              <div className="image-generation-status" role="status" aria-label={t('AI 任务队列')}>
+                <Working />
+                <div>
+                  <span>{t(currentAI.status === 'running' ? 'AI 正在后台生成，完成后自动保存。' : 'AI 请求已排队，轮到后自动生成。')}</span>
+                  <small>{state.projects.find((project) => project.id === currentAI.projectId)?.title} · {t(currentAI.title.split(' · ')[0])} · {currentAI.title.split(' · ').slice(1).join(' · ')} · {pendingAI.filter((task) => task.status === 'queued').length} {t('个任务等待中')}</small>
+                </div>
+                <Button onClick={() => void showAIGeneration()}>{t('查看生成')}</Button>
+                <Button onClick={() => setTasks(true)}>{t('任务中心')}</Button>
+              </div>
+            )}
             {p ? (
               <>
                 <div className="stagebar">
@@ -530,15 +600,28 @@ function App() {
                   <div className="provider-status">
                     <button onClick={() => setSettings(true)}>
                       <span className={chatgptConnected ? 'green-dot' : 'neutral-dot'} />
-                      ChatGPT
+                      {t('文字')} · {t(providerNames[state.config.models.text.provider])}
                     </button>
                     <button onClick={() => setSettings(true)}>
-                      <span className={state.hasKey ? 'green-dot' : 'neutral-dot'} />
-                      RunningHub
+                      <span className={imageConnected ? 'green-dot' : 'neutral-dot'} />
+                      {t('图片')} · {t(providerNames[state.config.models.image.provider])}
+                    </button>
+                    <button onClick={() => setSettings(true)}>
+                      <span className={videoKeyReady ? 'green-dot' : 'neutral-dot'} />
+                      {t('视频')} · {t(providerNames[state.config.models.video.provider])}
                       <ChevronDown size={12} />
                     </button>
                   </div>
                 </div>
+                {/* Keep the script session mounted while navigating between project tabs. */}
+                <ScriptEditor
+                  key={`script-${p.id}`}
+                  p={p}
+                  active={stage === 'script'}
+                  episodeId={episodeId}
+                  onEpisodeChange={changeEpisode}
+                  beforeEpisodeChange={beforeEpisodeChange}
+                />
                 {stage === 'board' ? (
                   <div className="director-body">
                     <div className="board-main">
@@ -677,6 +760,10 @@ function App() {
                                     <Play size={13} />
                                     {t('生成')}
                                   </Button>
+                                  <Button onClick={() => deleteShot(s)} title={t('删除镜头')}>
+                                    <Trash2 size={13} />
+                                    {t('删除镜头')}
+                                  </Button>
                                 </article>
                               ))}
                             </div>
@@ -743,32 +830,17 @@ function App() {
                         shot={shot}
                         onGenerate={(s, slot) => setGenerator({ kind: 'image', shot: s, slot })}
                         onVideo={video}
-                        onDelete={() =>
-                          setConfirm({
-                            title: t('移除这个镜头？'),
-                            text: t('镜头将从分镜列表移除，素材文件和历史版本会保留。'),
-                            run: () =>
-                              run({ type: 'deleteShot', projectId: p.id, shotId: shot.id }),
-                          })
-                        }
+                        onDelete={() => deleteShot(shot)}
                       />
                     )}
                   </div>
-                ) : stage === 'script' ? (
-                  <ScriptEditor
-                    key={p.id}
-                    p={p}
-                    episodeId={episodeId}
-                    onEpisodeChange={changeEpisode}
-                    beforeEpisodeChange={beforeEpisodeChange}
-                  />
                 ) : stage === 'assets' ? (
                   <AssetsView
                     key={p.id}
                     p={p}
                     onGenerate={(a: Asset) => setGenerator({ kind: 'image', assetId: a.id })}
                   />
-                ) : (
+                ) : stage === 'cut' ? (
                   <CutView
                     key={`${p.id}-${episodeId}`}
                     p={p}
@@ -780,7 +852,7 @@ function App() {
                     }}
                     onExport={() => setExporting(true)}
                   />
-                )}
+                ) : null}
               </>
             ) : (
               <div className="welcome">
@@ -825,7 +897,7 @@ function App() {
                   </span>
                   <span>
                     <Film size={16} />
-                    {t('RunningHub 视频')}
+                    {t('AI 视频')}
                   </span>
                 </div>
               </div>
@@ -837,11 +909,12 @@ function App() {
         {p && exporting && (
           <ExportDialog p={p} episodeId={episodeId} onClose={() => setExporting(false)} />
         )}{' '}
-        {tasks && <Tasks jobs={state.jobs} onClose={() => setTasks(false)} />}{' '}
+        {tasks && <Tasks jobs={state.jobs} aiTasks={aiTasks} onClose={() => setTasks(false)} />}{' '}
         {p && generator && (generator.kind === 'storyboard' ? (
           <StoryboardDialog
             p={p}
             episodeId={episodeId}
+            onSubmit={submitAI}
             onClose={() => setGenerator(null)}
           />
         ) : (
@@ -852,6 +925,7 @@ function App() {
             shot={generator.shot}
             assetId={generator.assetId}
             slot={generator.slot}
+            onSubmit={submitAI}
             onClose={() => setGenerator(null)}
           />
         ))}
@@ -887,7 +961,7 @@ function App() {
         {batch && p && (
           <Modal
             title={t('生成视频 / 创建镜头分组')}
-            subtitle={t('仅允许使用 RH币生成；企业共享 Key 和可能扣钱包的节点会被阻止。')}
+            subtitle={t(state.config.models.video.provider === 'runninghub' ? '仅允许使用 RH币生成；企业共享 Key 和可能扣钱包的节点会被阻止。' : '使用已配置的视频服务生成，费用按该服务商账户结算。')}
             onClose={() => setBatch(null)}
           >
             <div className="modal-body">
@@ -895,6 +969,9 @@ function App() {
               <div className="batch-shots">
                 {shots.map((s) => {
                   const required = minimumDialogueDuration(s.dialogue)
+                  const plan = planVideoContinuity(p, s, new Set(batch), state.jobs)
+                  const before = p.shots.find((shot) => shot.id === plan.previous?.shotId)
+                  const after = p.shots.find((shot) => shot.id === plan.next?.shotId)
                   return <label key={s.id} className={required > s.duration ? 'needs-timing' : ''}>
                     <input
                       type="checkbox"
@@ -905,7 +982,12 @@ function App() {
                         )
                       }
                     />
-                    <span>{s.title}</span>
+                    <span className="batch-shot-detail">{s.title}
+                      {batch.includes(s.id) && <span className="batch-shot-boundaries muted">
+                        {t('首帧：')}{before ? `${before.title} · ${t(plan.previous?.videoMediaId ? '视频尾帧' : '等待新视频尾帧')}` : s.firstMediaId ? t('手动首帧') : t('无前镜视频')}
+                        {' / '}{t('尾帧：')}{after ? `${after.title} · ${t('保留视频首帧')}` : s.lastMediaId ? t('手动尾帧') : t('无后镜视频')}
+                      </span>}
+                    </span>
                     <small className={required > 10 && required > s.duration ? 'danger' : ''}>
                       {s.duration}s{required > s.duration ? ` → ${required}s` : ''}
                     </small>
@@ -937,16 +1019,25 @@ function App() {
                 />
               </Field>
               <p className="small muted">
-                {t('工作流：')}
-                {videoWorkflow.id} · {state.config.instanceType === 'plus' ? 'Plus' : 'Standard'}{' '}
+                {t(providerNames[state.config.models.video.provider])} · {state.config.models.video.provider === 'runninghub' ?
+                  `${videoWorkflow.id} · ${state.config.instanceType === 'plus' ? 'Plus' : 'Standard'}` : state.config.models.video.model}{' '}
                 {t('· 并发')} 1{' '}
                 {t('· 当前选择')} {batch.length} {t('镜头')}
               </p>
               <p className="small muted">
-                {t('每镜最多使用 9 张人物、场景、道具参考图；同场景后续镜头还会参考上一镜的视频和末帧。参考图不是锁定首帧，成片请逐镜检查。')}
+                {t('局部重生成自动接回保留镜头：首帧取同场景前镜尾帧，尾帧取同场景后镜首帧；相邻镜头也在本批时按新视频串行衔接，不使用被替换的旧视频。缺少相邻视频的一侧不添加自动首尾帧。')}
               </p>
-              {!state.hasKey && (
-                <Button onClick={() => setSettings(true)}>{t('先绑定 RunningHub Key')}</Button>
+              <p className="small muted">
+                {t(state.config.models.video.provider === 'runninghub' ? '按导演台镜头顺序逐个生成；同场景使用上一镜尾帧和视频衔接，有音轨时参考音色与环境声。每镜最多使用 9 张人物、场景、道具参考图。' :
+                  '按镜头顺序生成，同场景继承上一镜实际尾帧作为首帧。此接口不继承音轨或多参考图。')}
+                {state.config.models.video.provider === 'minimax' && <span> {t('海螺输出无对白音轨，配音请导入镜头音频。')}</span>}
+                {state.config.models.video.provider === 'minimax' && <span> {t('当前海螺接口不支持尾帧衔接；需要接回后镜头时请选择 RunningHub 或可灵。')}</span>}
+              </p>
+              <p className="small muted">
+                {t('生成规范：人物与环境稳定、动作连续、音色一致、对白准确且声音清晰。生成后请逐镜检查。')}
+              </p>
+              {!videoKeyReady && (
+                <Button onClick={() => setSettings(true)}>{t('先配置视频模型 Key')}</Button>
               )}
             </div>
             <div className="modal-footer">
@@ -970,7 +1061,7 @@ function App() {
               </Button>
               <Button
                 primary
-                disabled={!batch.length || !state.hasKey || !!needsSplit.length}
+                disabled={!batch.length || !videoKeyReady || !!needsSplit.length}
                 onClick={async () => {
                   setError('')
                   const r = await run({

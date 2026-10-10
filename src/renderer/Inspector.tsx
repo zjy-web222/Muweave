@@ -280,7 +280,7 @@ export default function Inspector({
                       }}
                     >
                       <ImagePlus size={13} />
-                      {t('ChatGPT 生图')}
+                      {t('AI 生图')}
                     </Button>
                   ) : slot === 'video' ? (
                     <Button

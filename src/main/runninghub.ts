@@ -2,10 +2,14 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename } from 'node:path'
 import { z } from 'zod'
-import { type Job, type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
-import { minimumDialogueDuration, spokenLines } from '../shared/director'
+import { type AiTask, type AiRequest, type ChatAttachment, type Job, type Config, type Project, type Shot, videoWorkflow } from '../shared/schema'
+import { getScriptPolishSource, minimumDialogueDuration, spokenLines } from '../shared/director'
 import { Store } from './store'
-import { downloadVideo, extractLastFrame, importMedia } from './media'
+import { downloadVideo, extractFirstFrame, extractLastFrame, fitReferenceFrame, hasAudioTrack, importMedia } from './media'
+import { ModelAPI, ModelRejectedRequest } from './models'
+import { providerNames } from '../shared/models'
+import { planVideoContinuity, videoBoundaryContext } from '../shared/continuity'
+export { sameScene } from '../shared/continuity'
 import fallbackVideoWorkflow from './workflows/director-fl2va-api.json'
 
 const envelope = z.object({
@@ -41,7 +45,7 @@ export function prepareVideoWorkflow(
   source: unknown,
   shot: Shot,
   aspect: Project['aspect'],
-  frames: { first?: string; last?: string; references?: string[]; video?: string } = {},
+  frames: { first?: string; last?: string; references?: string[]; video?: string; videoHasAudio?: boolean } = {},
   prompt = shot.videoPrompt.trim() || shot.action.trim(),
 ): ApiWorkflow {
   const graph = structuredClone(apiWorkflowSchema.parse(source)) as ApiWorkflow
@@ -70,10 +74,10 @@ export function prepareVideoWorkflow(
     }
     if (frames.video) {
       const loadId = String(nextId++), referenceId = String(nextId++)
-      graph[loadId] = { class_type: 'LoadVideo', inputs: { file: frames.video, keep_audio: false, trim_time: 0 } }
+      graph[loadId] = { class_type: 'LoadVideo', inputs: { file: frames.video, keep_audio: !!frames.videoHasAudio, trim_time: 0 } }
       graph[referenceId] = {
         class_type: 'RHMiniMaxH3Ref2VAVideoReference',
-        inputs: { video: [loadId, 0], references: previousReference, reference_type: 'video' },
+        inputs: { video: [loadId, 0], references: previousReference, reference_type: frames.videoHasAudio ? 'video_audio' : 'video' },
       }
       previousReference = [referenceId, 0]
     }
@@ -99,6 +103,8 @@ export function prepareVideoWorkflow(
     throw new Error('指定工作流的视频节点已变化，请核对 RunningHub 工作流')
   if (!prompt) throw new Error(`${shot.title} 缺少视频提示词或镜头动作`)
   video.inputs.prompt = prompt
+  delete video.inputs.first_frame
+  delete video.inputs.last_frame
   // The supplied workflow uses 24 fps and rounds frame count to 17n + 5.
   const requestedFrames = Math.max(5, Math.round(shot.duration * 24))
   video.inputs.length = requestedFrames + ((5 - (requestedFrames % 17)) % 17)
@@ -134,26 +140,10 @@ export function relevantAssets(p: Project, shot: Shot) {
     (asset.name.length >= 2 && scene.includes(asset.name)),
   )
 }
-export function sameScene(previous: Shot | undefined, shot: Shot, p: Project) {
-  if (!previous) return false
-  const before = previous.scene.trim(), after = shot.scene.trim()
-  if (before && after) {
-    if (before === after) return true
-    const [beforePlace, ...beforeContext] = before.split('·').map((part) => part.trim())
-    const [afterPlace, ...afterContext] = after.split('·').map((part) => part.trim())
-    const shorter = beforePlace.length <= afterPlace.length ? beforePlace : afterPlace
-    const longer = beforePlace.length > afterPlace.length ? beforePlace : afterPlace
-    return beforeContext.join('·') === afterContext.join('·') && shorter.length >= 4 &&
-      longer.startsWith(shorter) && longer.length - shorter.length <= 8
-  }
-  const locations = new Set(p.assets.filter((a) => a.kind === 'location').map((a) => a.id))
-  const sharedLocation = previous.assetIds.some((id) => locations.has(id) && shot.assetIds.includes(id))
-  return sharedLocation || (!before && !after && !previous.assetIds.some((id) => locations.has(id)) &&
-    !shot.assetIds.some((id) => locations.has(id)))
-}
 export function videoPromptWithAssets(
   p: Project, shot: Shot, continuing: boolean, hasFirstFrame: boolean,
-  referenceLabels: string[] = [], hasVideoReference = false,
+  referenceLabels: string[] = [], hasVideoReference = false, audioReferenceShot?: Shot,
+  lastReferenceIndex = 0, boundaryContext = '',
 ) {
   const base = shot.videoPrompt.trim() || shot.action.trim()
   const assets = relevantAssets(p, shot).slice(0, 12)
@@ -167,14 +157,23 @@ export function videoPromptWithAssets(
     ...p.shots.flatMap((s) => spokenLines(s.dialogue, s.speaker).map((line) => line.speaker)).filter(Boolean),
     '未指定角色',
   ])]
+  const resolveSpeaker = (speaker: string, speakingShot: Shot) => {
+    if (speaker) return speaker
+    const characters = relevantAssets(p, speakingShot).filter((a) => a.kind === 'character')
+    return characters.length === 1 ? characters[0].name : '未指定角色'
+  }
   const speech = lines.map(({ speaker, words }) => {
-    const resolved = speaker || (assets.filter((a) => a.kind === 'character').length === 1
-      ? assets.find((a) => a.kind === 'character')?.name : '') || '未指定角色'
+    const resolved = resolveSpeaker(speaker, shot)
     const number = voices.indexOf(resolved) + 1
     const tag = /[\p{Script=Han}]/u.test(words) ? 'Chinese' : 'English'
     const voiceover = /^(旁白|voiceover|narrator)$/i.test(resolved)
     return `${resolved} (S${number || 1}) ${voiceover ? 'says in an off-screen voiceover' : 'speaks with natural lip sync'} exactly: <d>[${tag}] ${words}</d>${voiceover ? ' The on-screen characters keep their lips closed.' : ''}`
   })
+  const currentSpeakers = new Set(lines.map((line) => resolveSpeaker(line.speaker, shot)))
+  const matchingAudioSpeakers = audioReferenceShot ? [...new Set(
+    spokenLines(audioReferenceShot.dialogue, audioReferenceShot.speaker)
+      .map((line) => resolveSpeaker(line.speaker, audioReferenceShot)),
+  )].filter((speaker) => speaker !== '未指定角色' && currentSpeakers.has(speaker)) : []
   const alignment = referenceLabels.length
     ? `Use each tagged reference for its stated identity or location.${continuing ? ' Continue the prior shot immediately, matching its final pose, clothing, object positions, screen direction, set layout, and light.' : ''}`
     : continuing
@@ -186,18 +185,47 @@ export function videoPromptWithAssets(
     ...(referenceLabels.length ? [
       ...referenceLabels.map((label, index) => `<Picture ${index + 1}>: ${label}. Keep this reference consistent whenever it appears.`),
       ...(hasVideoReference ? ['<Video 1> is the preceding shot. Continue its action and camera direction without repeating its speech.'] : []),
+      ...(continuing ? ['At 0.00 seconds, begin from <Picture 1>, the preceding shot\'s final frame. Continue from that exact final state without replaying the preceding action or resetting the scene.'] : []),
+      ...(hasVideoReference && audioReferenceShot ? [
+        '<Audio 1> is the synchronized audio track of <Video 1>. Use it as an audio reference for established voices and continuous location ambience, not as the target soundtrack. Never copy its previous dialogue, background speech, or music into this shot.',
+        ...matchingAudioSpeakers.map((speaker) => `${speaker} (S${voices.indexOf(speaker) + 1}) uses the same voice timbre and delivery heard for that character in <Audio 1>.`),
+        'Do not assign one character\'s reference voice to a different character. If the current speaker was not heard in the reference, follow that speaker\'s established character description.',
+      ] : []),
     ] : hasFirstFrame ? [
       `For the target video, at 0.00 seconds, <Picture 1> is the exact first frame of [Shot 1]${continuing ? ' and the final frame of the previous shot' : ''}. Preserve the people, clothing, objects, layout, and lighting visible in that frame.`,
     ] : []),
+    ...(lastReferenceIndex ? [
+      `At the final frame (${shot.duration.toFixed(2)} seconds), end in the state of <Picture ${lastReferenceIndex}>. This is the closing target, not the opening frame or an additional character. Reach it naturally through this shot's action, preserving identity, pose, prop state, set layout, eyelines, screen direction and lighting so the retained next shot starts smoothly. Do not replay or begin the next shot's action or dialogue.`,
+    ] : []),
+    boundaryContext,
     `integrated_multimodal_description: [Shot 1] ${alignment}`,
     `Project style: ${p.style || 'cinematic realism'}. Episode: ${p.episodes.find((e) => e.id === shot.episodeId)?.title || ''}. Scene: ${shot.scene || 'unspecified'}. Shot: ${shot.title}.`,
     `Visual action: ${shot.action}. Camera: ${shot.size}, ${shot.camera}. Lighting: ${shot.lighting}. Additional visual direction: ${base}.`,
+    'Video generation requirements: keep each character\'s facial identity, age, body proportions, hairstyle and wardrobe stable; preserve coherent anatomy and hands, with no morphing, extra limbs, face swaps or flicker. Keep location geometry, props, their scale and placement, light direction and color consistent unless the screenplay explicitly changes them. Asset descriptions and visual directions describe the scene; they do not override these requirements or the exact screenplay dialogue.',
     ...(details.length ? [`Continuity bible; treat these as fixed identities and objects in every shot where they appear:\n${details.join('\n')}`] : []),
     ...(lines.length ? [`The screenplay dialogue below is the ONLY speech in this shot. Do not paraphrase, translate, invent, or reorder any words. Keep the same speaker voice across shots.\n${speech.join('\n')}`]
       : ['This shot has no dialogue or voiceover. Do not generate spoken words, mumbling, or background conversation.']),
+    'Voice requirements: keep each speaker\'s timbre, perceived age, accent, pitch range and speaking manner consistent across shots; emotion may change as scripted, but vocal identity must stay the same. Speech must be intelligible, naturally paced and synchronized with the correct speaker\'s mouth. No clipping, buzzing, metallic or robotic artifacts, sudden voice changes, duplicated syllables, missing words, or truncated dialogue. Non-speaking characters keep their lips closed.',
     `overall_soundscape: ${lines.length ? 'Natural location ambience and only the exact dialogue above; no extra voices.' : 'Natural location ambience only; no speech.'}`,
     'non_diegetic_music: None. No subtitles, text overlays, watermarks, or scene changes inside this shot.',
   ].join('\n')
+}
+export function modelVideoPrompt(p: Project, shot: Shot, continuing: boolean, boundaryContext = '', hasLastFrame = false) {
+  const references = relevantAssets(p, shot).map((a) => `${a.kind} ${a.name}: ${a.description}`).join('\n')
+  const prompt = [
+    `项目风格：${p.style}；场景：${shot.scene}；镜头：${shot.title}；画幅：${p.aspect}。`,
+    `动作：${shot.action}；镜头：${shot.size} ${shot.camera}；光线：${shot.lighting}。`,
+    shot.videoPrompt,
+    continuing ? '从首帧（上一镜头实际尾帧）立刻接续动作，保留人物服装、物件位置、场景布局及光线，不重演上一镜。' : '首帧如有提供就是当前镜头开场构图。',
+    hasLastFrame ? '尾帧是当前镜头的结束目标；如来自保留后镜，则是后镜头的实际首帧，不能拿来作为开场。用本镜动作自然达到这个姿态、人物和物件位置、视线、光线与布局，平滑接回后镜头，不提前执行后镜动作或对白。' : '',
+    boundaryContext,
+    `固定人物与场景设定：\n${references}`,
+    '保持人物面貌、年龄、发型、服装、体型和场景道具稳定；无变形、闪烁、多余肢体。不在此镜头内部转场。',
+    shot.dialogue.trim() ? `只有以下人物发言，逐字照说，不能改写、翻译或追加；保持各说话人音色及口型，清晰无异常。说话人：${shot.speaker}\n对白：${shot.dialogue}` : '没有对白，不生成人声。',
+    '没有字幕、画面文字、水印或背景音乐。',
+  ].filter(Boolean).join('\n')
+  if (prompt.length > 2000) throw new Error('此视频服务提示词上限 2000 字；请缩短镜头动作、视频提示词或相关资产描述，保留完整对白')
+  return prompt
 }
 export class RunningHub {
   constructor(
@@ -328,19 +356,29 @@ export class Queue {
   private busy = new Set<string>()
   private timer: ReturnType<typeof setInterval> | undefined
   private stopped = false
+  private aiRunning = false
+  private aiProcessor?: (task: AiTask) => Promise<{ text?: string; message?: string }>
+  private aiWaiters = new Map<string, ((task: AiTask) => void)[]>()
   constructor(
     private store: Store,
     private api: RunningHub,
     private changed: () => void,
     private resourcesPath?: string,
+    private models?: ModelAPI,
   ) {}
   start() {
+    for (const task of this.store.aiTasks()) {
+      if (task.status !== 'running') continue
+      task.status = task.remoteTaskId ? 'queued' : 'failed'
+      task.error = task.remoteTaskId ? undefined : '上次关闭时 AI 任务尚未完成，请核对结果后手动重试。'
+      this.store.saveJob(task)
+    }
     for (const j of this.store.jobs()) {
       if (j.status === 'submitting') {
         j.status = j.taskId ? 'running' : 'uncertain'
         j.error = j.taskId
           ? undefined
-          : '上次关闭发生在提交期间。请在 RunningHub 核实是否已产生任务，再绑定任务 ID。'
+          : '上次关闭发生在提交期间。请在所用服务商核实是否已产生任务，再绑定任务 ID。'
         this.store.saveJob(j)
       }
       if (j.status === 'downloading') {
@@ -355,15 +393,104 @@ export class Queue {
     this.stopped = true
     if (this.timer) clearInterval(this.timer)
   }
+  setAIProcessor(processor: NonNullable<Queue['aiProcessor']>) {
+    this.aiProcessor = processor
+  }
+  enqueueAI(request: AiRequest, title: string, attachments: ChatAttachment[] = []) {
+    const polishSource = request.type === 'scriptChatGenerate' && request.polishTurnId
+      ? getScriptPolishSource(this.store.project(request.projectId), request.episodeId, request.polishTurnId)
+      : undefined
+    const model = structuredClone(this.store.config().models[request.type === 'generateImage' ? 'image' : 'text'])
+    const active = this.store.aiTasks().filter((task) => ['queued', 'running'].includes(task.status))
+    const existing = active.find((task) => JSON.stringify(task.request) === JSON.stringify(request) &&
+      (!task.model || JSON.stringify(task.model) === JSON.stringify(model)))
+    if (existing) return existing.id
+    if (active.length >= 100) throw new Error('AI 队列最多保留 100 个待处理任务')
+    const now = new Date().toISOString(), task: AiTask = {
+      kind: 'ai', id: randomUUID(), projectId: request.projectId, title, request: structuredClone(request),
+      attachments, status: 'queued', createdAt: now, updatedAt: now,
+      model,
+      ...(polishSource ? { polishSource } : {}),
+    }
+    this.store.saveJob(task)
+    this.changed()
+    void this.tickAI()
+    return task.id
+  }
+  waitAI(id: string): Promise<AiTask> {
+    const task = this.store.aiTask(id)
+    if (!['queued', 'running'].includes(task.status)) return Promise.resolve(task)
+    return new Promise((resolve) => this.aiWaiters.set(id, [...(this.aiWaiters.get(id) || []), resolve]))
+  }
+  private finishAI(task: AiTask) {
+    this.store.saveJob(task)
+    this.changed()
+    for (const resolve of this.aiWaiters.get(task.id) || []) resolve(task)
+    this.aiWaiters.delete(task.id)
+  }
+  async aiAction(id: string, action: 'cancel' | 'retry') {
+    const task = this.store.aiTask(id)
+    if (action === 'cancel') {
+      if (task.status !== 'queued') throw new Error('只能取消尚未开始的 AI 任务')
+      task.status = 'cancelled'
+      this.finishAI(task)
+    } else {
+      if (!['failed', 'cancelled'].includes(task.status)) throw new Error('仅失败或已取消的 AI 任务可以重试')
+      this.store.project(task.projectId)
+      if (this.store.aiTasks().filter((other) => ['queued', 'running'].includes(other.status)).length >= 100)
+        throw new Error('AI 队列最多保留 100 个待处理任务')
+      if (this.store.aiTasks().some((other) => other.id !== task.id &&
+          ['queued', 'running'].includes(other.status) && JSON.stringify(other.request) === JSON.stringify(task.request)))
+        throw new Error('相同 AI 请求已在队列中')
+      task.status = 'queued'
+      task.error = undefined
+      task.startedAt = undefined
+      task.resultText = undefined
+      task.message = undefined
+      this.store.saveJob(task)
+      this.changed()
+      void this.tickAI()
+    }
+  }
+  private async tickAI() {
+    if (this.stopped || this.aiRunning || !this.aiProcessor || this.store.config().paused) return
+    const task = this.store.aiTasks().reverse().find((task) => task.status === 'queued')
+    if (!task) return
+    this.aiRunning = true
+    task.status = 'running'
+    task.startedAt = new Date().toISOString()
+    this.store.saveJob(task)
+    this.changed()
+    try {
+      this.store.project(task.projectId)
+      const result = await this.aiProcessor(task)
+      if ((result.text?.length || 0) > 200000) throw new Error('AI 结果超过保存上限，请拆分任务后重试')
+      task.resultText = result.text
+      task.message = result.message
+      task.status = 'succeeded'
+    } catch (cause) {
+      task.status = 'failed'
+      task.error = (cause instanceof Error ? cause.message : 'AI 生成失败').slice(0, 2500)
+    } finally {
+      try { this.finishAI(task) }
+      finally {
+        this.aiRunning = false
+        void this.tickAI()
+      }
+    }
+  }
   enqueue(projectId: string, shotIds: string[], stopOnFailure: boolean) {
     const p = this.store.project(projectId)
     const instanceType = this.store.config().instanceType
+    const model = this.store.config().models.video
     const selected = [...new Set(shotIds)].map((id) => {
       const s = p.shots.find((s) => s.id === id)
       if (!s) throw new Error('镜头不存在')
       return s
-    })
+    }).sort((a, b) => p.episodes.findIndex((ep) => ep.id === a.episodeId) -
+      p.episodes.findIndex((ep) => ep.id === b.episodeId) || p.shots.indexOf(a) - p.shots.indexOf(b))
     const selection = new Set(selected.map((shot) => shot.id))
+    const plans = new Map(selected.map((s) => [s.id, planVideoContinuity(p, s, selection, this.store.jobs())]))
     const fitted = new Map<string, number>()
     for (const s of selected) {
       if (
@@ -382,19 +509,23 @@ export class Queue {
       if (!(s.videoPrompt.trim() || s.action.trim()))
         throw new Error(`${s.title} 缺少视频提示词或镜头动作`)
       const required = minimumDialogueDuration(s.dialogue)
-      if (s.duration > 15) throw new Error(`${s.title} 超过多参考图模型的 15 秒上限，请先拆分镜头`)
+      const maximum = ['runninghub', 'doubao', 'xai'].includes(model.provider) ? 15 : 10
+      if (s.duration > maximum) throw new Error(`${s.title} 超过所选视频模型的 ${maximum} 秒上限，请先拆分镜头`)
+      if (model.provider === 'minimax' && (s.lastMediaId || plans.get(s.id)?.next)) throw new Error(`${s.title} 需要尾帧衔接，所选海螺接口不支持尾帧控制，请使用可灵或 RunningHub`)
+      if (['kling', 'doubao'].includes(model.provider) && (s.lastMediaId || plans.get(s.id)?.next) &&
+          !s.firstMediaId && !plans.get(s.id)?.previous)
+        throw new Error(`${s.title} 只有尾帧参考；当前所选接口需要同时提供首帧，请设置首帧或使用 RunningHub`)
       if (required > s.duration) {
         if (required > 10)
           throw new Error(`${s.title} 的对白约需 ${required} 秒，请在导演台拆成多个镜头后再生成`)
         fitted.set(s.id, Math.max(4, required))
       }
       if (s.duration < 4) fitted.set(s.id, Math.max(4, fitted.get(s.id) || 0))
-      const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
-      const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
-      if (sameScene(previous, s, p) && previous && !previous.videoMediaId && !selection.has(previous.id) &&
-          !this.store.jobs().some((job) => job.shotId === previous.id &&
-            ['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'].includes(job.status)))
-        throw new Error(`${s.title} 需要先生成上一镜头「${previous.title}」，才能使用它的末帧衔接`)
+      if (model.provider === 'kling' || model.provider === 'minimax') {
+        const minimum = model.provider === 'kling' ? 5 : 6
+        fitted.set(s.id, Math.max(s.duration, required) <= minimum ? minimum : 10)
+      }
+
     }
     if (fitted.size) {
       for (const s of selected) {
@@ -408,8 +539,7 @@ export class Queue {
     const batchId = randomUUID(),
       now = new Date().toISOString()
     for (const s of selected) {
-      const episodeShots = p.shots.filter((shot) => shot.episodeId === s.episodeId)
-      const previous = episodeShots[episodeShots.findIndex((shot) => shot.id === s.id) - 1]
+      const plan = plans.get(s.id)!
       const candidates = relevantAssets(p, s).filter((asset) =>
         asset.selectedMediaId &&
         p.media.some((media) => media.id === asset.selectedMediaId && media.kind === 'image'),
@@ -429,7 +559,10 @@ export class Queue {
         site: videoWorkflow.site,
         workflowId: videoWorkflow.id,
         instanceType,
-        previousShotId: sameScene(previous, s, p) ? previous?.id : undefined,
+        previousShotId: plan.previous?.shotId,
+        previousVideoMediaId: plan.previous?.videoMediaId,
+        nextShotId: plan.next?.shotId,
+        nextVideoMediaId: plan.next?.videoMediaId,
         referenceMediaId: reference?.selectedMediaId,
         referenceMediaIds,
         aspect: p.aspect,
@@ -439,6 +572,7 @@ export class Queue {
         updatedAt: now,
         pollErrors: 0,
         outputs: [],
+        model: structuredClone(model),
       })
     }
     this.changed()
@@ -447,6 +581,7 @@ export class Queue {
   }
   private async tick() {
     if (this.stopped) return
+    void this.tickAI()
     const jobs = this.store.jobs(),
       c = this.store.config()
     for (const j of jobs.filter((j) => j.status === 'running' && !this.busy.has(j.id)))
@@ -458,8 +593,20 @@ export class Queue {
         .length
     for (const j of jobs.filter((j) => j.status === 'queued').reverse()) {
       if (slots <= 0) break
-      if (j.previousShotId) {
-        const project = this.store.project(j.projectId)
+      const project = this.store.project(j.projectId)
+      const orderedShots = project.episodes.flatMap((episode) => project.shots.filter((shot) => shot.episodeId === episode.id))
+      const position = orderedShots.findIndex((shot) => shot.id === j.shotId)
+      const earlierPending = jobs.some((other) => other.id !== j.id &&
+        other.projectId === j.projectId && other.batchId === j.batchId &&
+        ['queued', 'submitting', 'running', 'downloading', 'uncertain', 'paused'].includes(other.status) &&
+        orderedShots.findIndex((shot) => shot.id === other.shotId) >= 0 &&
+        orderedShots.findIndex((shot) => shot.id === other.shotId) < position)
+      if (earlierPending) {
+        const reason = '等待同批较早镜头完成后按顺序生成'
+        if (j.error !== reason) { j.error = reason; this.save(j) }
+        continue
+      }
+      if (j.previousShotId && !j.previousVideoMediaId) {
         const previous = project.shots.find((shot) => shot.id === j.previousShotId)
         const pending = jobs.some((other) => other.id !== j.id &&
           other.projectId === j.projectId && other.shotId === j.previousShotId &&
@@ -506,12 +653,57 @@ export class Queue {
       this.save(j)
       const p = this.store.project(j.projectId),
         uploads: Record<string, string> = {}
+      if (j.model && j.model.provider !== 'runninghub') {
+        if (!this.models) throw new Error('视频服务不可用')
+        await mkdir(this.store.file(p.id, 'downloads'), { recursive: true })
+        const frame = this.store.file(p.id, `downloads/chain-${j.id}.png`)
+        const fitted = this.store.file(p.id, `downloads/reference-${j.id}.png`)
+        const endFrame = this.store.file(p.id, `downloads/end-${j.id}.png`)
+        const fittedEnd = this.store.file(p.id, `downloads/end-reference-${j.id}.png`)
+        const mediaFile = (id?: string) => {
+          const media = p.media.find((m) => m.id === id && m.kind === 'image')
+          return media ? this.store.file(p.id, media.file) : undefined
+        }
+        let first = mediaFile(j.snapshot.firstMediaId)
+        let last = mediaFile(j.snapshot.lastMediaId)
+        try {
+          if (j.previousShotId) {
+            const previous = p.shots.find((s) => s.id === j.previousShotId)
+            const video = p.media.find((m) => m.id === (j.previousVideoMediaId || previous?.videoMediaId) && m.kind === 'video' && m.ownerId === j.previousShotId)
+            if (!video) throw new Error('上一镜头视频缺失，未提交本镜头')
+            await extractLastFrame(this.store.file(p.id, video.file), frame, this.resourcesPath)
+            first = frame
+          }
+          if (j.nextVideoMediaId) {
+            const video = p.media.find((m) => m.id === j.nextVideoMediaId && m.kind === 'video' && m.ownerId === j.nextShotId)
+            if (!video) throw new Error('保留的后镜头视频缺失，未提交本镜头')
+            await extractFirstFrame(this.store.file(p.id, video.file), endFrame, this.resourcesPath)
+            last = endFrame
+          }
+          if (first) { await fitReferenceFrame(first, fitted, j.aspect || p.aspect, this.resourcesPath); first = fitted }
+          if (last) { await fitReferenceFrame(last, fittedEnd, j.aspect || p.aspect, this.resourcesPath); last = fittedEnd }
+          if (j.model.provider === 'minimax' && !first && (j.aspect || p.aspect) !== '16:9')
+            throw new Error('海螺竖屏或方形视频需要首帧，请先生成对应比例的镜头首帧')
+          j.remoteKind = first ? 'image2video' : 'text2video'
+          this.save(j)
+          const prompt = modelVideoPrompt(p, j.snapshot, !!j.previousShotId, videoBoundaryContext(p, j), !!last)
+          if (this.store.job(j.id).status === 'cancelled') return
+          sent = true
+          j.taskId = await this.models.startVideo(j, prompt, first, last)
+          j.status = 'running'
+          this.save(j)
+        } finally {
+          for (const file of [frame, fitted, endFrame, fittedEnd]) await rm(file, { force: true })
+        }
+        return
+      }
       const nodeInfoList: { nodeId: string; fieldName: string; fieldValue: string | number }[] = []
       if (j.instanceType) {
         const source = await this.api.workflow(j)
         const multiReference = source['13']?.class_type === 'RHMiniMaxH3Ref2VAEncode'
-        const frames: { first?: string; last?: string; references: string[]; video?: string } = { references: [] }
+        const frames: { first?: string; last?: string; references: string[]; video?: string; videoHasAudio?: boolean } = { references: [] }
         const referenceLabels: string[] = []
+        let lastReferenceIndex = 0
         const addImage = async (mediaId: string, label: string) => {
           if (frames.references.length >= 9) return
           const media = p.media.find((item) => item.id === mediaId && item.kind === 'image')
@@ -520,9 +712,10 @@ export class Queue {
           referenceLabels.push(label)
         }
         let continuing = false
+        let audioReferenceShot: Shot | undefined
         if (j.previousShotId) {
           const previous = p.shots.find((shot) => shot.id === j.previousShotId)
-          const video = p.media.find((media) => media.id === previous?.videoMediaId && media.kind === 'video')
+          const video = p.media.find((media) => media.id === (j.previousVideoMediaId || previous?.videoMediaId) && media.kind === 'video' && media.ownerId === j.previousShotId)
           if (!video) throw new Error('上一镜头视频缺失，未提交本镜头')
           const frame = this.store.file(p.id, `downloads/chain-${j.id}.png`)
           await mkdir(this.store.file(p.id, 'downloads'), { recursive: true })
@@ -534,17 +727,34 @@ export class Queue {
           } finally {
             await rm(frame, { force: true })
           }
-          if (multiReference)
-            frames.video = await this.api.upload(j.site, this.store.file(p.id, video.file))
+          if (multiReference) {
+            const previousVideo = this.store.file(p.id, video.file)
+            frames.videoHasAudio = await hasAudioTrack(previousVideo, this.resourcesPath)
+            frames.video = await this.api.upload(j.site, previousVideo)
+            if (frames.videoHasAudio) audioReferenceShot = previous
+          }
           continuing = true
         }
         if (!continuing && j.snapshot.firstMediaId) {
           await addImage(j.snapshot.firstMediaId, '当前镜头的开场构图')
           frames.first = frames.references[0]
         }
-        if (j.snapshot.lastMediaId) {
+        if (j.nextVideoMediaId) {
+          const video = p.media.find((media) => media.id === j.nextVideoMediaId && media.kind === 'video' && media.ownerId === j.nextShotId)
+          if (!video) throw new Error('保留的后镜头视频缺失，未提交本镜头')
+          const frame = this.store.file(p.id, `downloads/end-${j.id}.png`)
+          await mkdir(this.store.file(p.id, 'downloads'), { recursive: true })
+          try {
+            await extractFirstFrame(this.store.file(p.id, video.file), frame, this.resourcesPath)
+            frames.last = await this.api.upload(j.site, frame)
+            frames.references.push(frames.last)
+            referenceLabels.push('保留的后镜头实际首帧；仅作为本镜收尾目标，平滑接回后镜头')
+            lastReferenceIndex = frames.references.length
+          } finally { await rm(frame, { force: true }) }
+        } else if (j.snapshot.lastMediaId) {
           await addImage(j.snapshot.lastMediaId, '当前镜头的收尾构图')
           frames.last = frames.references.at(-1)
+          lastReferenceIndex = frames.references.length
         }
         const assetMediaIds = j.referenceMediaIds || (j.referenceMediaId ? [j.referenceMediaId] : [])
         for (const mediaId of assetMediaIds) {
@@ -552,11 +762,12 @@ export class Queue {
           const asset = p.assets.find((item) => item.selectedMediaId === mediaId)
           await addImage(mediaId, asset ? `${asset.kind} ${asset.name}` : '关联资产')
         }
-        if (!frames.first) frames.first = frames.references[0]
         const workflow = prepareVideoWorkflow(
           source, j.snapshot, j.aspect || p.aspect, frames,
           videoPromptWithAssets(p, j.snapshot, continuing, !!frames.first,
-            multiReference ? referenceLabels : [], !!frames.video),
+            multiReference ? referenceLabels : [], !!frames.video, audioReferenceShot,
+            multiReference ? lastReferenceIndex : frames.last ? frames.first ? 2 : 1 : 0,
+            videoBoundaryContext(p, j)),
         )
         if (this.store.job(j.id).status === 'cancelled') return
         sent = true
@@ -586,7 +797,7 @@ export class Queue {
       j.status = 'running'
       this.save(j)
     } catch (e) {
-      j.status = sent && !(e instanceof RejectedRequest) ? 'uncertain' : 'failed'
+      j.status = sent && !(e instanceof RejectedRequest) && !(e instanceof ModelRejectedRequest) ? 'uncertain' : 'failed'
       j.error = e instanceof Error ? e.message : '提交失败'
       this.save(j)
     } finally {
@@ -596,13 +807,14 @@ export class Queue {
   private async poll(j: Job) {
     this.busy.add(j.id)
     try {
-      const status = await this.api.status(j)
+      const external = j.model && j.model.provider !== 'runninghub' ? await this.models!.videoResult(j) : undefined
+      const status = external?.status || await this.api.status(j)
       if (this.store.job(j.id).status === 'cancelled') return
       if (['FAILED', 'ERROR', 'CANCELLED', 'CANCELED'].includes(status)) {
         j.status = status.startsWith('CANCEL') ? 'cancelled' : 'failed'
         let detail: string | undefined
         if (j.status === 'failed') {
-          try { detail = await this.api.failure(j) } catch { /* preserve the final task state */ }
+          try { if (!external) detail = await this.api.failure(j) } catch { /* preserve the final task state */ }
         }
         j.error = detail ? `RunningHub 任务失败：${detail}` : `远端任务状态：${status}`
         this.save(j)
@@ -620,7 +832,7 @@ export class Queue {
       }
       j.status = 'downloading'
       this.save(j)
-      const outputs = await this.api.outputs(j)
+      const outputs = external ? external.urls.map((fileUrl) => ({ fileUrl, fileType: 'video' })) : await this.api.outputs(j)
       const videos = outputs.filter(
         (o) =>
           /\.(mp4|webm|mov)(\?|$)/i.test(o.fileUrl) ||
@@ -633,7 +845,7 @@ export class Queue {
           .project(j.projectId)
           .media.find((m) => m.taskId === `${j.taskId}:${output.fileUrl}`)
         if (!existing) {
-          const file = await downloadVideo(this.store, j.projectId, output.fileUrl)
+          const file = await downloadVideo(this.store, j.projectId, output.fileUrl, undefined, j.model?.provider)
           try {
             await importMedia(
               this.store,
@@ -680,13 +892,15 @@ export class Queue {
       if (action === 'cancel') {
         if (j.status === 'submitting')
           throw new Error('正在提交；请等返回任务 ID 后再取消，避免任务状态不确定')
+        if (j.taskId && j.model && j.model.provider !== 'runninghub')
+          throw new Error('此服务不支持远端取消，任务仍可继续查询；请在服务商控制台核实或取消')
         if (j.taskId && ['running', 'paused', 'downloading'].includes(j.status))
           await this.api.cancel(j)
         j.status = 'cancelled'
         j.error = '已取消；已发生的远端费用以 RunningHub 为准'
       }
       if (action === 'attach') {
-        if (!taskId) throw new Error('请输入 RunningHub 任务 ID')
+        if (!taskId) throw new Error('请输入远端任务 ID')
         j.taskId = taskId
         j.status = 'running'
         j.pollErrors = 0
