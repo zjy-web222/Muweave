@@ -75,6 +75,14 @@ if (!window.director) {
   const mediaUrl = (url: string) => base + 'media/' + url.replace(/^media:\/\//, '')
   const api: Bridge = {
     studio: true, mediaUrl,
+    async previsFrame(sessionId, index, data) {
+      await ready
+      const response = await fetch(`${base}previs-frame/${encodeURIComponent(sessionId)}/${index}`, {
+        method: 'POST', headers: { 'Content-Type': 'image/png', 'X-Muweave-Client': 'studio' }, body: data,
+        signal: AbortSignal.timeout(60000),
+      })
+      if (!response.ok) throw new Error(z.object({ error: z.string() }).parse(await response.json()).error)
+    },
     async command(command: Command) {
       await ready
       if (command.type === 'clipboard') {
@@ -86,7 +94,7 @@ if (!window.director) {
       if (['importMedia', 'uploadAssetImage', 'importSource', 'importArchive', 'scriptChatPickFiles'].includes(command.type)) {
         const accept = command.type === 'uploadAssetImage' ? '.png,.jpg,.jpeg,.webp' :
           command.type === 'importArchive' ? '.zip' :
-          command.type === 'importMedia' ? command.slot === 'video' ? '.mp4,.webm,.mov' :
+          command.type === 'importMedia' ? command.slot === 'model' ? '.glb' : ['video', 'previs'].includes(command.slot) ? '.mp4,.webm,.mov' :
             command.slot === 'audio' ? '.mp3,.wav,.m4a,.aac,.ogg' : '.png,.jpg,.jpeg,.webp' : ''
         const files = await pickFiles(command.type === 'scriptChatPickFiles', accept)
         if (!files.length) return replySchema.parse(await request('command', { command: { type: 'snapshot' } }))

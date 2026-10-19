@@ -11,6 +11,7 @@ import { projectSchema, type Asset, type Media, type Project } from '../shared/s
 import { escapeHtml, toSrt } from '../shared/director'
 import { approvedModelMedia } from './models'
 import type { ModelSelection } from '../shared/models'
+import { validateGlb, type PrevisSource } from '../shared/previs'
 
 export const episodeRenderVersion = 'muweave-bilingual-wordmark-v3'
 
@@ -18,11 +19,12 @@ const extensions = {
   image: ['.png', '.jpg', '.jpeg', '.webp'],
   video: ['.mp4', '.webm', '.mov'],
   audio: ['.mp3', '.wav', '.m4a', '.aac', '.ogg'],
+  model: ['.glb'],
 }
-export function mediaKind(file: string): 'image' | 'video' | 'audio' {
+export function mediaKind(file: string): 'image' | 'video' | 'audio' | 'model' {
   const ext = extname(file).toLowerCase()
   for (const [kind, list] of Object.entries(extensions))
-    if (list.includes(ext)) return kind as 'image' | 'video' | 'audio'
+    if (list.includes(ext)) return kind as 'image' | 'video' | 'audio' | 'model'
   throw new Error(
     '不支持此素材格式。图片支持 PNG/JPG/WebP，视频支持 MP4/WebM/MOV，音频支持 MP3/WAV/M4A。',
   )
@@ -37,6 +39,10 @@ export function activate(p: Project, m: Media) {
     return
   }
   if (!shot) return
+  if (m.slot === 'previs') {
+    shot.previsMediaId = m.id
+    if (shot.usePrevis) shot.stale = !!shot.videoMediaId
+  }
   if (m.slot === 'first') {
     shot.firstMediaId = m.id
     shot.stale = !!shot.videoMediaId
@@ -63,6 +69,8 @@ export async function importMedia(
   prompt = '',
   taskId?: string,
   newAsset?: Asset,
+  signal?: AbortSignal,
+  source?: PrevisSource,
 ) {
   const p = store.project(projectId)
   if (newAsset && (newAsset.id !== ownerId || slot !== 'reference'))
@@ -78,9 +86,17 @@ export async function importMedia(
     (['first', 'last', 'reference'].includes(slot) && kind !== 'image') ||
     (slot === 'video' && kind !== 'video') ||
     (slot === 'audio' && kind !== 'audio')
+    || (slot === 'previs' && kind !== 'video')
+    || (slot === 'composition' && kind !== 'image')
+    || (slot === 'model' && kind !== 'model')
+    || (kind === 'model' && slot !== 'model')
   )
     throw new Error('素材类型与当前插槽不匹配')
   if ((await stat(file)).size > 1024 * 1024 * 1024) throw new Error('单个素材不能超过 1 GB')
+  if (kind === 'model') {
+    if ((await stat(file)).size > 50 * 1024 * 1024) throw new Error('GLB 模型必须小于 50 MB')
+    validateGlb(await readFile(file))
+  }
   const id = randomUUID(),
     relative = `media/${id}${extname(file).toLowerCase()}`
   await mkdir(store.file(projectId, 'media'), { recursive: true })
@@ -96,8 +112,10 @@ export async function importMedia(
     prompt,
     taskId,
     createdAt: new Date().toISOString(),
+    ...(source ? { previsSource: source } : {}),
   }
   try {
+    signal?.throwIfAborted()
     store.update(projectId, (p) => {
       if (newAsset) {
         if (p.assets.some((asset) => asset.id === newAsset.id)) throw new Error('资产已存在')
@@ -225,7 +243,7 @@ export async function restoreArchive(store: Store, file: string) {
         filter: (entry) => {
           total += entry.originalSize
           const safe =
-            /^(project\.json|manifest\.json|tasks\.json|media\/[a-zA-Z0-9_-]+\.(png|jpg|jpeg|webp|mp4|mov|webm|wav|mp3|m4a|aac|ogg)|chat\/[a-zA-Z0-9_-]{1,100})$/.test(
+            /^(project\.json|manifest\.json|tasks\.json|media\/[a-zA-Z0-9_-]+\.(png|jpg|jpeg|webp|mp4|mov|webm|wav|mp3|m4a|aac|ogg|glb)|chat\/[a-zA-Z0-9_-]{1,100})$/.test(
               entry.name,
             )
           if (!safe || total > 512 * 1024 * 1024) invalid = true
@@ -249,6 +267,7 @@ export async function restoreArchive(store: Store, file: string) {
   for (const m of p.media) {
     if (!/^media\/[a-zA-Z0-9_-]+\.[a-z0-9]+$/.test(m.file) || !data[m.file])
       throw new Error('存档素材缺失或路径不安全')
+    if (m.kind === 'model') validateGlb(data[m.file])
   }
   for (const episode of p.episodes)
     for (const turn of episode.scriptChat)
@@ -291,6 +310,19 @@ export async function hasAudioTrack(input: string, resourcesPath?: string) {
   } catch {
     throw new Error('无法检查上一镜头音轨，未提交本镜头')
   }
+}
+export async function fitPrevisContinuityVideo(input: string, output: string, budget: number, resourcesPath?: string) {
+  if (budget < 2 || budget > 15) throw new Error('H3 前镜与预演参考合计最多 15 秒，前镜至少保留 2 秒')
+  const { ffprobe, ffmpeg } = ffmpegBinaries(resourcesPath)
+  const { stdout } = await promisify(execFile)(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', input],
+    { windowsHide: true, timeout: 30000, maxBuffer: 64 * 1024 })
+  const duration = Number(JSON.parse(stdout).format?.duration)
+  if (!Number.isFinite(duration) || duration < 2) throw new Error('前镜视频不足 2 秒，不能与预演组合参考；请关闭预演参考或使用更长的前镜视频')
+  if (duration <= budget) return input
+  await promisify(execFile)(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-sseof', String(-budget), '-i', input,
+    '-map', '0:v:0', '-map', '0:a?', '-t', String(budget), '-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac',
+    '-movflags', '+faststart', output], { windowsHide: true, shell: false, timeout: 120000, maxBuffer: 64 * 1024 })
+  return output
 }
 export async function extractLastFrame(input: string, output: string, resourcesPath?: string) {
   const { ffmpeg } = ffmpegBinaries(resourcesPath)

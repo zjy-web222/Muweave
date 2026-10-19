@@ -48,6 +48,9 @@ import { prepareChatFile } from './chat-files'
 import { Queue, RunningHub, assertCoinOnlyWorkflow, inputsChanged, relevantAssets } from './runninghub'
 import { activate, importMedia, exportArchive, restoreArchive, Exporter, episodeRenderVersion } from './media'
 import { startPluginServer, type CommandFiles } from './plugin'
+import { applyShotBatch } from '../shared/shots'
+import { validatePrevis } from '../shared/previs'
+import { PrevisExporter } from './previs'
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -62,6 +65,7 @@ let window: BrowserWindow | null = null,
   chatgpt: ChatGPT,
   codex: CodexText,
   models: ModelAPI
+let previsExporter: PrevisExporter
 const exporter = new Exporter(app.isPackaged ? process.resourcesPath : undefined)
 const pendingChatFiles = new Map<
   string,
@@ -121,6 +125,8 @@ function snapshot(): Snapshot {
     exporting: exporter.busy,
     credentials: credentialStatus(),
     modelServicesReady: true,
+    videoResolutionReady: true,
+    dialogueRulesReady: true,
   }
 }
 async function chooseSave(defaultPath: string, extensions: string[]) {
@@ -181,9 +187,12 @@ function createWindow() {
 if (primary)
   void app.whenReady().then(async () => {
     store = new Store(join(app.getPath('userData'), 'library'))
+    // The task center no longer supports a global pause. Clear the legacy saved flag.
+    if (store.config().paused) store.set('config', { ...store.config(), paused: false })
     chatgpt = new ChatGPT(store, changed)
     codex = new CodexText(store)
     models = new ModelAPI(modelCredential)
+    previsExporter = new PrevisExporter(store, app.isPackaged ? process.resourcesPath : undefined)
     const api = new RunningHub(key)
     queue = new Queue(store, api, changed, app.isPackaged ? process.resourcesPath : undefined, models)
     const mediaFile = (url: URL) => {
@@ -235,7 +244,7 @@ if (primary)
       const target = owner ? 'name' in owner ? owner.name : owner.title : episode?.title
       return queue.enqueueAI(request, `${label} · ${target || project.title}`, attachments)
     }
-    const command = async (raw: unknown, executing?: AiTask): Promise<Reply> => {
+    const command = async (raw: unknown, executing?: AiTask, signal?: AbortSignal): Promise<Reply> => {
       try {
         const c = commandSchema.parse(raw)
         if (!executing) {
@@ -249,8 +258,8 @@ if (primary)
         let message: string | undefined, text: string | undefined
         const selection = (channel: ModelChannel) => executing?.model || store.config().models[channel]
         const generate = (prompt: string, schema?: Record<string, unknown>, options?: { workingDirectory?: string; images?: string[] }) =>
-          selection('text').provider === 'chatgpt' ? codex.generate(prompt, schema, options) :
-            models.text(selection('text'), prompt, schema, options?.images)
+          selection('text').provider === 'chatgpt' ? codex.generate(prompt, schema, { ...options, signal }) :
+            models.text(selection('text'), prompt, schema, options?.images, signal)
         switch (c.type) {
           case 'aiEnqueue':
             text = await enqueueAI(c.request)
@@ -258,6 +267,17 @@ if (primary)
             break
           case 'aiTask':
             await queue.aiAction(c.taskId, c.action)
+            break
+          case 'terminateTasks':
+            message = `已停止 ${queue.terminateAll()} 个本地任务；新任务可正常提交，远端状态请查看各任务记录。`
+            break
+          case 'deleteTask':
+            queue.deleteTask(c.taskId)
+            message = '任务记录已删除，已生成素材仍保留'
+            break
+          case 'batchShots':
+            store.update(c.projectId, (p) => applyShotBatch(p, c.episodeId, c.shotIds, c.patch, c.assetMode))
+            message = `已批量更新 ${new Set(c.shotIds).size} 个镜头`
             break
           case 'snapshot':
             break
@@ -442,6 +462,7 @@ if (primary)
                 attachments.push({ id: file.id, name: file.name, size: file.size, file: saved })
               }
               const now = new Date().toISOString()
+              signal?.throwIfAborted()
               store.update(c.projectId, (current) => {
                 const target = current.episodes.find((e) => e.id === c.episodeId)
                 if (!target) throw new Error('集不存在')
@@ -503,6 +524,7 @@ if (primary)
             const prompt = buildPrompt(project, c.episodeId, 'storyboard')
             const result = await generate(c.request.trim() ? `${prompt}\n\n用户补充要求：${c.request.trim()}` : prompt,
               storyboardResponseJsonSchema)
+            signal?.throwIfAborted()
             if (result.length > 200000) throw new Error('AI 结果超过保存上限，请拆分任务后重试')
             if (executing) {
               executing.resultText = result
@@ -527,16 +549,17 @@ if (primary)
             const existing = executing && p.media.find((media) => media.taskId === `ai:${executing.id}`)
             if (existing) { text = `media://asset/${p.id}/${existing.id}`; break }
             const selected = selection('image')
-            const bytes = selected.provider === 'chatgpt' ? await codex.image(prompt, p.aspect) :
+            const bytes = selected.provider === 'chatgpt' ? await codex.image(prompt, p.aspect, signal) :
               await models.image(selected, prompt, p.aspect, executing?.remoteTaskId, (taskId, queryUrl) => {
                 if (executing) { executing.remoteTaskId = taskId; executing.remoteQueryUrl = queryUrl; store.saveJob(executing); changed() }
-              }, executing?.remoteQueryUrl)
+              }, executing?.remoteQueryUrl, signal)
+            signal?.throwIfAborted()
             const file = store.file(p.id, `downloads/ai-${randomUUID()}.${imageExtension(bytes)}`)
             await mkdir(store.file(p.id, 'downloads'), { recursive: true })
             await writeFile(file, bytes)
             try {
               const media = await importMedia(store, p.id, c.ownerId, c.slot, file, prompt,
-                executing ? `ai:${executing.id}` : undefined)
+                executing ? `ai:${executing.id}` : undefined, undefined, signal)
               text = `media://asset/${p.id}/${media.id}`
             } finally {
               await rm(file, { force: true })
@@ -557,11 +580,47 @@ if (primary)
                   lastMediaId: old.lastMediaId,
                   videoMediaId: old.videoMediaId,
                   audioMediaId: old.audioMediaId,
+                  previs: old.previs,
+                  previsMediaId: old.previsMediaId,
                 }
                 next.stale = old.stale || (!!old.videoMediaId && inputsChanged(next, old))
                 p.shots[index] = next
               }
             })
+            break
+          case 'savePrevis':
+            store.update(c.projectId, (p) => {
+              const shot = p.shots.find((shot) => shot.id === c.shotId)
+              if (!shot) throw new Error('镜头不存在')
+              validatePrevis(p, c.scene, c.plan)
+              p.previsScenes ||= []
+              const previous = p.previsScenes.find((scene) => scene.id === c.scene.id)
+              if (previous && previous.revision !== c.scene.revision) throw new Error('片场已在其他窗口修改，请重新打开预演')
+              if (shot.previs && shot.previs.revision !== c.plan.revision) throw new Error('镜头预演已在其他窗口修改，请重新打开预演')
+              const sceneChanged = !previous || JSON.stringify(previous) !== JSON.stringify(c.scene)
+              const sourceVersions = p.media.flatMap((media) => media.previsSource?.sceneId === c.scene.id ? [media.previsSource.sceneRevision] : [])
+              const scene = { ...c.scene, revision: sceneChanged ? Math.max(previous?.revision || 0, ...sourceVersions) + 1 : previous!.revision }
+              if (previous) p.previsScenes[p.previsScenes.indexOf(previous)] = scene
+              else p.previsScenes.push(scene)
+              const planChanged = !shot.previs || JSON.stringify(shot.previs) !== JSON.stringify(c.plan)
+              const planVersions = p.media.flatMap((media) => media.ownerId === shot.id && media.previsSource ? [media.previsSource.planRevision] : [])
+              shot.previs = { ...c.plan, revision: planChanged || sceneChanged ? Math.max(shot.previs?.revision || 0, ...planVersions) + 1 : shot.previs!.revision }
+              for (const linked of p.shots) {
+                if (linked.usePrevis && linked.previs?.sceneId === scene.id && (sceneChanged || (linked.id === shot.id && planChanged))) linked.stale ||= !!linked.videoMediaId
+              }
+            })
+            message = '预演已保存到本机'
+            break
+          case 'previsOutput':
+            if (c.action === 'start') text = await previsExporter.start(c.projectId, c.shotId, c.format || 'video')
+            else if (c.action === 'cancel') {
+              if (!c.sessionId) throw new Error('缺少导出会话')
+              await previsExporter.cancel(c.sessionId)
+            } else {
+              const media = await previsExporter.finish(c.projectId, c.shotId, c.sessionId)
+              text = media.id
+              message = c.format === 'image' ? '构图图已保存到镜头素材' : '白模预演视频已保存到镜头素材'
+            }
             break
           case 'deleteShot':
             if (
@@ -735,7 +794,7 @@ if (primary)
             break
           case 'importMedia': {
             const file = await chooseFile(
-              c.slot === 'video'
+              c.slot === 'model' ? ['glb'] : ['video', 'previs'].includes(c.slot)
                 ? ['mp4', 'webm', 'mov']
                 : c.slot === 'audio'
                   ? ['mp3', 'wav', 'm4a', 'aac', 'ogg']
@@ -952,8 +1011,8 @@ if (primary)
         }
       }
     }
-    queue.setAIProcessor(async (task) => {
-      const reply = await command(task.request, task)
+    queue.setAIProcessor(async (task, signal) => {
+      const reply = await command(task.request, task, signal)
       if (!reply.ok) throw new Error(reply.error)
       return { text: reply.text, message: reply.message }
     })
@@ -962,9 +1021,14 @@ if (primary)
         return { ok: false, error: '不允许的调用来源' }
       return command(raw)
     })
+    ipcMain.handle('director:previs-frame', async (event, sessionId: string, index: number, data: ArrayBuffer) => {
+      if (event.sender !== window?.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('不允许的调用来源')
+      await previsExporter.frame(sessionId, index, data)
+    })
     studioServer = await startPluginServer({
       userData: app.getPath('userData'), renderer: join(here, '../renderer'), store, snapshot, mediaFile,
       command: (raw, context) => commandFiles.run(context, () => command(raw)),
+      previsFrame: (sessionId, index, bytes) => previsExporter.frame(sessionId, index, bytes),
     })
     if (!pluginMode) createWindow()
     queue.start()
@@ -978,6 +1042,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   queue?.stop()
   exporter.cancel()
+  void previsExporter?.cancel()
   void studioServer?.close()
 })
 app.on('will-quit', () => store?.close())

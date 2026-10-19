@@ -32,7 +32,7 @@ export function AITaskProgress({ task, runningLabel = 'AI 正在后台生成，�
   const ahead = Math.max(0, queued.findIndex((item) => item.id === task.id)) +
     (state.aiTasks.some((item) => item.status === 'running') ? 1 : 0)
   return <p className="small muted" role="status">
-    {task.status === 'queued' ? t('排队中 · 前面还有 {count} 个任务').replace('{count}', String(ahead)) : t(runningLabel)}
+    {task.status === 'queued' ? t('排队中 · 前面还有 {count} 个任务').replace('{count}', String(ahead)) : t(task.cancelRequested ? '正在终止…' : runningLabel)}
     {task.status === 'running' && <span aria-hidden="true"> {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</span>}
   </p>
 }
@@ -242,6 +242,8 @@ export function Versions({
         ? s?.firstMediaId
         : slot === 'last'
           ? s?.lastMediaId
+          : slot === 'previs'
+            ? s?.previsMediaId
           : slot === 'video'
             ? s?.videoMediaId
             : s?.audioMediaId

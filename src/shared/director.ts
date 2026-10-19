@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { type Project, type ScriptChatTurn, type Shot, scriptPolishDirectionSchema } from './schema'
+import { type Project, type ScriptChatTurn, type Shot, scriptPolishDirectionSchema, shotSchema } from './schema'
+import type { ModelSelection } from './models'
 
 function jsonObject(raw: string) {
   const trimmed = raw
@@ -12,21 +13,44 @@ function jsonObject(raw: string) {
   return JSON.parse(trimmed.slice(start, end + 1))
 }
 
-export function spokenLines(dialogue: string, fallbackSpeaker = '') {
+export function spokenLines(dialogue: string, fallbackSpeaker = '', knownSpeakers?: readonly string[]) {
   return dialogue.split(/\r?\n/).map((raw) => {
     const line = raw.trim()
-    const labeled = /^([^：:]{1,20})[：:]\s*(.+)$/.exec(line)
-    return { speaker: labeled?.[1].trim() || fallbackSpeaker.trim(), words: labeled?.[2].trim() || line }
+    const labeled = /^(\p{L}[\p{L}\p{M}\p{N} _-]{0,19})[：:]\s*(.*)$/u.exec(line)
+    const label = labeled?.[1].trim()
+    const isSpeaker = !!label && !/^https?:\/\//i.test(line) &&
+      (!knownSpeakers || label === fallbackSpeaker.trim() || knownSpeakers.includes(label))
+    if (labeled && isSpeaker) return { speaker: labeled[1].trim(), words: labeled[2].trim() }
+    return { speaker: fallbackSpeaker.trim(), words: line }
   }).filter((line) => line.words)
 }
 
 export function minimumDialogueDuration(dialogue: string) {
   const seconds = spokenLines(dialogue).reduce((total, line) => {
     const han = (line.words.match(/[\p{Script=Han}]/gu) || []).length
-    const words = (line.words.match(/[A-Za-z]+/g) || []).length
-    return total + han / 3.5 + words / 2.5 + (han || words ? 0.4 : 0)
+    const tokens = line.words.match(/[A-Za-z]+/g) || []
+    const english = tokens.reduce((seconds, word) => seconds + (/^[A-Z]{2,6}$/.test(word) ? word.length / 3 : 1 / 2.5), 0)
+    const digits = (line.words.match(/\d/g) || []).length
+    return total + (han + digits) / 3.5 + english + (han || tokens.length || digits ? 0.4 : 0)
   }, 0)
   return seconds ? Math.ceil(seconds + 0.5) : 0
+}
+
+// These are the duration constraints of the video adapters currently implemented here.
+// Share the same plan between the paid queue boundary and its UI preview.
+export function videoDurationLimits(provider: ModelSelection['provider']) {
+  if (provider === 'kling') return { minimum: 5, maximum: 10, options: [5, 10] }
+  if (provider === 'minimax') return { minimum: 6, maximum: 10, options: [6, 10] }
+  return { minimum: 4, maximum: ['runninghub', 'doubao', 'xai'].includes(provider) ? 15 : 10, options: undefined }
+}
+
+export function planVideoTiming(shot: Pick<Shot, 'dialogue' | 'duration'>, provider: ModelSelection['provider']) {
+  const { minimum, maximum, options } = videoDurationLimits(provider)
+  const required = minimumDialogueDuration(shot.dialogue)
+  const requested = Math.max(shot.duration, required, minimum)
+  const duration = options?.find((value) => value >= requested) ?? requested
+  const issue = required > maximum ? 'dialogue' : shot.duration > maximum ? 'duration' : undefined
+  return { required, duration, maximum, issue }
 }
 
 const shotInput = z.object({
@@ -34,6 +58,7 @@ const shotInput = z.object({
   action: z.string().default(''),
   dialogue: z.string().default(''),
   speaker: z.string().max(200).default(''),
+  pronunciationNotes: shotSchema.shape.pronunciationNotes,
   scene: z.string().default(''),
   duration: z.number().min(1).max(120).default(5),
   size: z.string().default('中景'),
@@ -55,6 +80,7 @@ const storyboardShotProperties = {
   action: { type: 'string' },
   dialogue: { type: 'string' },
   speaker: { type: 'string' },
+  pronunciationNotes: { type: 'string' },
   duration: { type: 'number' },
   size: { type: 'string' },
   camera: { type: 'string' },
@@ -198,9 +224,9 @@ export function buildPrompt(
       '把当前集拆成可编辑分镜，每镜 3–10 秒；保持角色、场景和动作连续性，生成英文生图与视频提示词。按剧情播放顺序排列镜头，同场景的下一镜从上一镜的最终动作和位置继续，不重复已经完成的动作；scene 使用一致的地点、内外景和时段名称，只有剧本明确转场时才更换场景。人物外貌、服装、体型、环境布局和道具状态保持固定，禁止无剧情依据的变形或变化；同一人物音色、口音与说话方式保持一致。逐字保留原剧本中的对白，不要改写、翻译、增添台词；每镜尽量只有一个说话角色，在 speaker 字段填该角色名，旁白填“旁白”，无对白时 dialogue 和 speaker 都为空。按每秒约 3.5 个汉字或 2.5 个英文词估算对白时长，额外留出开口与停顿时间；一段对白超过 10 秒就按语意拆成多个连续镜头，不要压缩台词。videoPrompt 只描述画面、动作和运镜，不要在其中另写可能与 dialogue 冲突的新台词。',
   }[kind]
   const shotExample =
-    '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"逐字照录的对白","speaker":"说话角色名或旁白","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
+    '{"title":"镜头标题","scene":"场景","action":"画面动作","dialogue":"逐字照录的对白","speaker":"说话角色名或旁白","pronunciationNotes":"","duration":5,"size":"中景","camera":"缓慢推近","lighting":"柔和侧光","imagePrompt":"英文提示词","videoPrompt":"英文视频提示词","characters":["角色名"]}'
   if (kind === 'storyboard')
-    return `${context}\n\n你是影视导演。${task}本次先覆盖主要情节，生成 6–12 个镜头；用户另有镜头数量要求时按用户要求，但单次不超过 24 个。需要更多镜头时可以继续追加。\n仅输出有效 JSON（不要解释）：{"shots":[${shotExample}]}\n只返回本集分镜，不改写剧本或资产，不捏造已有素材和生成结果。`
+    return `${context}\n\n你是影视导演。${task}对白字段只放真正发音的原文，不混入角色标签、括号动作或读音解释；多人发言必须每行“角色：台词”，按原剧本顺序。跨镜拆分时逐字连续分配，不漏掉句首句尾，不重复上一镜台词；保留原文有意重复的字词。数字、英文缩写与人名不能自行替换成同音字；发音不确定时保留原文供用户确认，不猜读音。pronunciationNotes 仅照录用户明确指定的读音，每行“词语=读音”，没有指定时填空字符串。\n本次先覆盖主要情节，生成 6–12 个镜头；用户另有镜头数量要求时按用户要求，但单次不超过 24 个。需要更多镜头时可以继续追加。\n仅输出有效 JSON（不要解释）：{"shots":[${shotExample}]}\n只返回本集分镜，不改写剧本或资产，不捏造已有素材和生成结果。`
   return `${context}\n\n你是影视导演。${task}\n仅输出有效 JSON（不要解释）：\n{"episodeTitle":"集标题","script":"完整剧本","assets":[{"kind":"character","name":"角色名","description":"外观与服装","prompt":"英文参考图提示词"}],"shots":[${shotExample}]}\n只返回本任务相关字段；不要捏造已有素材和生成结果。`
 }
 export function subtitleTime(seconds: number) {
