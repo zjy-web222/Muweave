@@ -132,12 +132,17 @@ export async function generateCodexImage(
   env: NodeJS.ProcessEnv,
   prompt: string,
   aspect: Project['aspect'],
+  signal?: AbortSignal,
 ): Promise<Buffer> {
+  signal?.throwIfAborted()
   if (!prompt.trim()) throw new Error('请先填写生图提示词。')
   const root = await mkdtemp(join(tmpdir(), 'muweave-codex-image-'))
   let rpc: CodexImageRpc | undefined
+  const abort = () => { void rpc?.close() }
   try {
     rpc = new CodexImageRpc(cli, root, env)
+    signal?.addEventListener('abort', abort, { once: true })
+    signal?.throwIfAborted()
     await rpc.call('initialize', {
       clientInfo: { name: 'muweave', version: '0.2.2' },
       capabilities: { experimentalApi: true },
@@ -236,6 +241,7 @@ export async function generateCodexImage(
       unsubscribe()
     }
   } finally {
+    signal?.removeEventListener('abort', abort)
     await rpc?.close()
     await rm(root, { recursive: true, force: true })
   }

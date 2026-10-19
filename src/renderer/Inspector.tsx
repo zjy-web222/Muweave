@@ -10,9 +10,12 @@ import {
   SlidersHorizontal,
   Trash2,
   ExternalLink,
+  Layers3,
 } from 'lucide-react'
 import { type Project, type Shot } from '../shared/schema'
 import { Button, Field, Preview, useWorkspace, Versions } from './ui'
+import BatchShotDialog from './BatchShotDialog'
+import { DialoguePreview } from './DialoguePreview'
 
 export default function Inspector({
   p,
@@ -20,24 +23,27 @@ export default function Inspector({
   onGenerate,
   onVideo,
   onDelete,
+  onPrevis,
 }: {
   p: Project
   shot: Shot
   onGenerate: (s: Shot, slot: 'first' | 'last') => void
   onVideo: (s: Shot) => void
   onDelete: () => void
+  onPrevis: () => void
 }) {
   const t = useT()
-  const { run } = useWorkspace(),
+  const { run, state } = useWorkspace(),
     [draft, setDraft] = useState(shot),
     [tab, setTab] = useState<'shot' | 'media'>('shot'),
     [dirty, setDirty] = useState(false),
-    [saving, setSaving] = useState(false)
+    [saving, setSaving] = useState(false),
+    [batchEdit, setBatchEdit] = useState<{ source: Shot; assetId?: string } | null>(null),
+    [assetSuggestion, setAssetSuggestion] = useState<string | null>(null)
   const pending = useRef<Shot | null>(null)
   useEffect(() => {
-    setDraft(shot)
-    setDirty(false)
-  }, [shot.id])
+    if (!pending.current) setDraft(shot)
+  }, [shot])
   const set = <K extends keyof Shot>(k: K, v: Shot[K]) => {
     const next = { ...draft, [k]: v }
     pending.current = next
@@ -97,6 +103,14 @@ export default function Inspector({
       <div className="inspector-content">
         {tab === 'shot' ? (
           <>
+            <div className="inspector-batch-tools">
+              <Button onClick={async () => { if (await save()) onPrevis() }}><Layers3 size={14} />{t('打开 3D 预演')}</Button>
+              <Button disabled={saving || p.shots.filter((s) => s.episodeId === shot.episodeId).length < 2}
+                onClick={async () => { if (await save()) setBatchEdit({ source: draft }) }}>
+                <Layers3 size={14} />{t('批量应用到其他镜头')}
+              </Button>
+              <p className="small muted">{t('统一资产、场景、景别、运镜、光线或时长。')}</p>
+            </div>
             <div className="inspector-preview">
               <Preview
                 p={p}
@@ -135,7 +149,7 @@ export default function Inspector({
                 onChange={(e) => set('action', e.target.value)}
               />
             </Field>
-            <Field label={t('对白 / 字幕')}>
+            <Field label={t('对白 / 字幕')} hint={t('只填实际说出的文字；多人对白每行填写“角色：台词”，动作和读音说明单独填写。')}>
               <textarea
                 rows={2}
                 value={draft.dialogue}
@@ -150,6 +164,16 @@ export default function Inspector({
                 placeholder={t('无对白时留空；旁白填写“旁白”')}
               />
             </Field>
+            <Field label={t('读音备注（不朗读）')} hint={t('每行填写“词语=读音”，例如“重庆=chóng qìng”；数字、英文缩写可写明读法。')}>
+              <textarea rows={2} maxLength={2000} value={draft.pronunciationNotes || ''}
+                disabled={!state.dialogueRulesReady}
+                onChange={(event) => set('pronunciationNotes', event.target.value)} />
+            </Field>
+            {!state.dialogueRulesReady && <p className="small muted">{t('台词规范更新需在当前任务结束后重启开发版。')}</p>}
+            <details className="dialogue-review">
+              <summary>{t('实际朗读台词预览')}</summary>
+              <DialoguePreview p={p} shot={draft} />
+            </details>
             <div className="field-row">
               <Field label={t('运镜')}>
                 <input value={draft.camera} onChange={(e) => set('camera', e.target.value)} />
@@ -190,14 +214,17 @@ export default function Inspector({
                     <input
                       type="checkbox"
                       checked={draft.assetIds.includes(a.id)}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         set(
                           'assetIds',
                           e.target.checked
                             ? [...draft.assetIds, a.id]
                             : draft.assetIds.filter((id) => id !== a.id),
                         )
-                      }
+                        if (e.target.checked && p.shots.some((s) => s.episodeId === shot.episodeId && s.id !== shot.id))
+                          setAssetSuggestion(a.id)
+                        else if (assetSuggestion === a.id) setAssetSuggestion(null)
+                      }}
                     />
                     {a.name}
                   </label>
@@ -205,6 +232,12 @@ export default function Inspector({
                 {!p.assets.length && <small>{t('在资产库中添加角色、场景和道具。')}</small>}
               </div>
             </Field>
+            {assetSuggestion && draft.assetIds.includes(assetSuggestion) && <div className="inspector-asset-suggestion" role="status">
+              <p className="small">{t('是否将其他镜头也绑定此资产？')} <strong>{p.assets.find((a) => a.id === assetSuggestion)?.name}</strong></p>
+              <div className="field-row"><Button onClick={async () => {
+                if (await save()) { setBatchEdit({ source: draft, assetId: assetSuggestion }); setAssetSuggestion(null) }
+              }}>{t('选择镜头并应用')}</Button><Button onClick={() => setAssetSuggestion(null)}>{t('仅当前镜头')}</Button></div>
+            </div>}
             <label className="check-label">
               <input
                 type="checkbox"
@@ -311,6 +344,7 @@ export default function Inspector({
           {t('保存')}
         </Button>
       </footer>
+      {batchEdit && <BatchShotDialog p={p} source={batchEdit.source} assetId={batchEdit.assetId} onClose={() => setBatchEdit(null)} />}
     </aside>
   )
 }

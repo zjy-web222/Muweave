@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 
 const data = await mkdtemp(join(tmpdir(), 'director-desktop-'))
 const evidence = resolve('test-results')
@@ -48,16 +49,224 @@ try {
   const project = snapshot.state.projects[0],
     shot = project.shots[0]
   assert.equal(shot.title, '桌面测试 · 已保存的镜头')
+  // Exercise the actual 3D editor and local encoder; no paid generation is submitted.
+  await page.getByRole('button', { name: '3D 预演', exact: true }).click()
+  const previs = page.getByRole('region', { name: '3D 预演台', exact: true })
+  await previs.locator('canvas[aria-label="3D 预演视窗"]').waitFor()
+  await previs.getByRole('button', { name: '导出构图图', exact: true }).waitFor({ state: 'visible' })
+  await page.waitForFunction(() => [...document.querySelectorAll('.previs button')].some((button) => button.textContent.includes('导出白模视频') && !button.disabled))
+  assert((await previs.locator('canvas').evaluate((canvas) => canvas.toDataURL())).length > 10000)
+  await previs.locator('.previs-object > button:first-child').first().click()
+  await previs.getByLabel('预演时间', { exact: true }).focus()
+  await previs.getByLabel('预演时间', { exact: true }).press('End')
+  await previs.getByLabel('位置 X', { exact: true }).fill('2')
+  await previs.getByRole('button', { name: '摄影机', exact: true }).first().click()
+  await previs.getByRole('button', { name: '推近', exact: true }).click()
+  if (await previs.getByRole('button', { name: '保存预演', exact: true }).isEnabled())
+    await previs.getByRole('button', { name: '保存预演', exact: true }).click()
+  await page.waitForFunction(() => document.querySelector('.previs-title [role="status"]')?.textContent === '已保存到本机')
+  await page.screenshot({ path: join(evidence, '02-previs-editor.png') })
+  await previs.getByRole('button', { name: '导出构图图', exact: true }).click()
+  await page.getByText('构图图已保存到镜头素材', { exact: true }).waitFor()
+  await previs.getByRole('button', { name: '导出白模视频', exact: true }).click()
+  await page.getByText('白模预演视频已保存到镜头素材', { exact: true }).waitFor({ timeout: 120000 })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  const previsProject = snapshot.state.projects[0], previsShot = previsProject.shots.find((item) => item.id === shot.id)
+  assert(previsShot.previsMediaId)
+  assert.equal(previsShot.videoMediaId, undefined)
+  assert.equal(previsShot.previs.camera.length, 2)
+  const previsMedia = previsProject.media.find((media) => media.id === previsShot.previsMediaId)
+  assert.equal(previsMedia.slot, 'previs')
+  assert.equal(previsMedia.previsSource.duration, shot.duration)
+  const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json',
+    join(data, 'library', 'projects', project.id, previsMedia.file)], { encoding: 'utf8', windowsHide: true }))
+  assert.equal(probe.streams.length, 1)
+  assert.equal(Number(probe.streams[0].nb_frames), Math.ceil(shot.duration * 24))
+  await page.screenshot({ path: join(evidence, '02-previs-exported.png') })
+  await previs.getByRole('button', { name: '导出白模视频', exact: true }).click()
+  await previs.getByRole('button', { name: '取消导出', exact: true }).click()
+  await previs.locator('.previs-export').waitFor({ state: 'hidden' })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.projects[0].media.filter((m) => m.slot === 'previs').length, 1)
+  const cancelledNotice = previs.getByRole('button', { name: '关闭提示', exact: true })
+  if (await cancelledNotice.count()) await cancelledNotice.click()
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1120, 760))
+  await page.screenshot({ path: join(evidence, '02-previs-compact.png') })
+  assert(await previs.evaluate((element) => element.scrollWidth <= element.clientWidth), JSON.stringify(await previs.evaluate((element) => [...element.querySelectorAll('*')].filter((child) => child.scrollWidth > child.clientWidth + 2).slice(0, 15).map((child) => ({ class: child.className, width: child.clientWidth, scroll: child.scrollWidth })))) )
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1540, 990))
+  await page.getByRole('button', { name: '列表', exact: true }).click()
+  const extraAsset = project.assets.find((asset) => !shot.assetIds.includes(asset.id))
+  assert(extraAsset)
+  await page.locator('.inspector .asset-checks label').filter({ hasText: extraAsset.name }).getByRole('checkbox').check()
+  await page.getByText('是否将其他镜头也绑定此资产？', { exact: false }).waitFor()
+  await page.getByRole('button', { name: '选择镜头并应用', exact: true }).click()
+  const bulkDialog = page.getByRole('dialog', { name: '批量应用镜头设置' })
+  await bulkDialog.getByLabel('应用范围').selectOption('episode')
+  await bulkDialog.screenshot({ path: join(evidence, '02-bulk-asset-linking.png') })
+  await bulkDialog.getByRole('button', { name: '确认批量应用', exact: true }).click()
+  await bulkDialog.waitFor({ state: 'hidden' })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert(snapshot.state.projects[0].shots.every((item) => item.assetIds.includes(extraAsset.id)))
+  for (const oldShot of project.shots) {
+    const current = snapshot.state.projects[0].shots.find((item) => item.id === oldShot.id)
+    assert(oldShot.assetIds.every((id) => current.assetIds.includes(id)))
+    assert.equal(current.action, oldShot.action)
+    assert.equal(current.dialogue, oldShot.dialogue)
+  }
+  await page.getByLabel('光线', { exact: true }).fill('桌面批量验证光线')
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await page.getByRole('button', { name: '批量应用到其他镜头', exact: true }).click()
+  await bulkDialog.locator('.batch-edit-field').filter({ hasText: '关联资产' }).getByRole('checkbox').uncheck()
+  await bulkDialog.locator('.batch-edit-field').filter({ hasText: '光线' }).getByRole('checkbox').check()
+  await bulkDialog.getByLabel('应用范围').selectOption('episode')
+  await bulkDialog.getByRole('button', { name: '清空选择', exact: true }).click()
+  assert.equal(await bulkDialog.locator('.batch-edit-shot-list input:checked').count(), 0)
+  await bulkDialog.getByRole('button', { name: '全选', exact: true }).click()
+  assert.equal(await bulkDialog.locator('.batch-edit-shot-list input:checked').count(), project.shots.length - 1)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1120, 760))
+  await bulkDialog.screenshot({ path: join(evidence, '02-bulk-settings-compact.png') })
+  assert(await bulkDialog.evaluate((element) => element.scrollWidth <= element.clientWidth))
+  await bulkDialog.getByRole('button', { name: '确认批量应用', exact: true }).click()
+  await bulkDialog.waitFor({ state: 'hidden' })
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1540, 990))
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert(snapshot.state.projects[0].shots.every((item) => item.lighting === '桌面批量验证光线'))
+
+  // Seed only the isolated test library. Pausing prevents these fixtures from submitting work.
+  const previousConfig = snapshot.state.config
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config }), { ...previousConfig, paused: true })).ok)
+  const taskDates = ['2026-10-10T00:00:00.000Z', '2026-10-11T01:00:00.000Z', '2026-10-11T02:00:00.000Z', '2026-10-11T03:00:00.000Z']
+  const fixtureTask = (id, status, index) => ({ kind: 'ai', id, projectId: project.id, title: `AI 编剧 · ${id}`,
+    request: { type: 'scriptChatGenerate', projectId: project.id, episodeId: project.episodes[0].id, request: id, attachmentIds: [] },
+    attachments: [], status, createdAt: taskDates[index], updatedAt: taskDates[index] })
+  const fixtureTasks = [fixtureTask('desktop-running', 'running', 0), fixtureTask('desktop-old-queued', 'queued', 1),
+    { id: 'desktop-video-queued', projectId: project.id, shotId: shot.id, snapshot: shot, status: 'queued',
+      instanceType: 'plus', aspect: '16:9', videoResolution: '768p',
+      site: previousConfig.site, workflowId: '123', mappings: [], stopOnFailure: false, pollErrors: 0, outputs: [],
+      createdAt: taskDates[2], updatedAt: taskDates[2] }, fixtureTask('desktop-finished', 'succeeded', 3)]
+  const fixtureDb = new DatabaseSync(join(data, 'library', 'director.sqlite'))
+  try { for (const task of fixtureTasks) fixtureDb.prepare('INSERT INTO jobs VALUES(?,?)').run(task.id, JSON.stringify(task)) }
+  finally { fixtureDb.close() }
+  await page.evaluate(() => window.director.command({ type: 'pause', paused: true }))
+  await page.getByRole('button', { name: '任务中心', exact: true }).first().click()
+  const taskDialog = page.getByRole('dialog', { name: '任务中心', exact: true })
+  assert.equal(await taskDialog.getByRole('button', { name: /暂停队列|继续队列/ }).count(), 0)
+  assert.deepEqual(await taskDialog.locator('.job').evaluateAll((rows) => rows.map((row) => row.dataset.taskId)),
+    ['desktop-running', 'desktop-finished', 'desktop-video-queued', 'desktop-old-queued'])
+  assert.match(await taskDialog.locator('[data-task-id="desktop-video-queued"]').innerText(), /1344×768/)
+  await taskDialog.screenshot({ path: join(evidence, '02-task-order-and-actions.png') })
+  await taskDialog.locator('[data-task-id="desktop-finished"]').getByRole('button', { name: '删除记录', exact: true }).click()
+  await page.getByRole('button', { name: '确认删除记录', exact: true }).click()
+  await taskDialog.locator('[data-task-id="desktop-finished"]').waitFor({ state: 'hidden' })
+  await taskDialog.getByRole('button', { name: '全部终止任务', exact: true }).click()
+  await page.getByRole('button', { name: '确认全部终止', exact: true }).click()
+  await page.getByRole('dialog', { name: '终止全部任务？', exact: true }).waitFor({ state: 'hidden' })
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  assert.equal(snapshot.state.config.paused, false)
+  assert(snapshot.state.aiTasks.every((task) => task.status === 'cancelled'))
+  assert(snapshot.state.jobs.every((task) => task.status === 'cancelled'))
+  await taskDialog.screenshot({ path: join(evidence, '02-tasks-terminated.png') })
+  for (const task of fixtureTasks.filter((task) => task.id !== 'desktop-finished')) {
+    assert((await page.evaluate((taskId) => window.director.command({ type: 'deleteTask', taskId }), task.id)).ok)
+  }
+  await taskDialog.getByText('队列很安静', { exact: true }).waitFor()
+  await taskDialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config }), previousConfig)).ok)
   await page.getByLabel('时长 / 秒').fill('3')
   await page.getByLabel('对白 / 字幕').fill('今天我们一起去看看那封信吧')
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await page.getByRole('button', { name: '批量', exact: true }).click()
   const batchDialog = page.getByRole('dialog', { name: '生成视频 / 创建镜头分组' })
+  const resolution = batchDialog.getByRole('combobox', { name: '视频清晰度' })
+  assert.equal(await resolution.inputValue(), '480p')
+  await resolution.selectOption('768p')
+  await page.waitForFunction(() => window.director.command({ type: 'snapshot' }).then((reply) => reply.state.config.videoResolution === '768p'))
+  assert.match(await resolution.locator('option:checked').innerText(), /1344×768/)
+  await batchDialog.screenshot({ path: join(evidence, '02-video-hd-resolution.png') })
+  await resolution.selectOption('480p')
+  await page.waitForFunction(() => window.director.command({ type: 'snapshot' }).then((reply) => reply.state.config.videoResolution === '480p'))
+  await batchDialog.getByRole('button', { name: '清空选择', exact: true }).click()
+  assert.equal(await batchDialog.locator('.batch-shots input:checked').count(), 0)
+  await batchDialog.getByRole('button', { name: '全选', exact: true }).click()
+  assert.equal(await batchDialog.locator('.batch-shots input:checked').count(), project.shots.length)
   await batchDialog.getByText('确认生成时会自动延长 1 个镜头').waitFor()
   assert.match(await batchDialog.locator('.batch-shots label').first().innerText(), /3s → \d+s/)
   assert.match(await batchDialog.locator('.batch-shots label').first().innerText(), /无前镜视频/)
   await batchDialog.screenshot({ path: join(evidence, '02-dialogue-timing-preview.png') })
   await batchDialog.getByRole('button', { name: '关闭对话框' }).click()
+  // Duration preview fixtures remain local: never click Generate or submit to a provider.
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  const timingOriginals = snapshot.state.projects[0].shots.slice(0, 3)
+  const timingConfig = snapshot.state.config
+  // Exercise pronunciation editing and preflight without submitting a paid task.
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config, key: 'local-test-only-not-a-real-key' }), timingConfig)).ok)
+  await page.getByLabel('对白 / 字幕').fill('2026 年去重庆，聊聊 ADHD。')
+  await page.getByLabel('说话角色').fill('旁白')
+  await page.getByLabel('读音备注（不朗读）').fill('重庆=chóng qìng\n2026=二零二六')
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
+  const pronunciationShot = snapshot.state.projects[0].shots[0]
+  assert.equal(pronunciationShot.pronunciationNotes, '重庆=chóng qìng\n2026=二零二六')
+  await page.locator('.inspector summary').filter({ hasText: '实际朗读台词预览' }).click()
+  assert.equal(await page.locator('.inspector .dialogue-preview-line p').innerText(), '2026 年去重庆，聊聊 ADHD。')
+  await page.getByRole('button', { name: '批量', exact: true }).click()
+  await batchDialog.locator('summary').filter({ hasText: '台词与读音核对' }).click()
+  assert.equal(await batchDialog.locator('.batch-dialogue-list .dialogue-preview-line p').first().innerText(), '2026 年去重庆，聊聊 ADHD。')
+  await batchDialog.getByText('读音指导（不朗读）：重庆 → chóng qìng；2026 → 二零二六', { exact: true }).waitFor()
+  assert(await batchDialog.getByRole('button', { name: /^确认生成/ }).isEnabled())
+  await batchDialog.locator('.batch-dialogue-list section').first().scrollIntoViewIfNeeded()
+  await batchDialog.screenshot({ path: join(evidence, '02-dialogue-script-review.png') })
+  assert((await page.evaluate(({ projectId, shot }) => window.director.command({ type: 'shot', projectId, shot }),
+    { projectId: project.id, shot: { ...pronunciationShot, pronunciationNotes: '无关词语=读音' } })).ok)
+  await batchDialog.getByText('1 个镜头的台词设置需要修正，请展开核对。', { exact: true }).waitFor()
+  assert(await batchDialog.getByRole('button', { name: /^确认生成/ }).isDisabled())
+  await batchDialog.getByRole('button', { name: '关闭对话框' }).click()
+  const fitShot = { ...timingOriginals[0], duration: 10, dialogue: '字'.repeat(33) }
+  assert((await page.evaluate(({ projectId, shot }) => window.director.command({ type: 'shot', projectId, shot }),
+    { projectId: project.id, shot: fitShot })).ok)
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config, key: 'local-test-only-not-a-real-key' }), timingConfig)).ok)
+  await page.getByRole('button', { name: '批量', exact: true }).click()
+  await batchDialog.getByText('当前模型支持 4–15 秒；对白时长按正常语速估算。').waitFor()
+  assert.match(await batchDialog.locator('.batch-shots label').first().innerText(), /10s → 11s/)
+  assert.equal(await batchDialog.locator('.batch-timing-alert').count(), 0)
+  assert(await batchDialog.getByRole('button', { name: /^确认生成/ }).isEnabled())
+  if (await page.getByRole('button', { name: '关闭提示', exact: true }).count())
+    await page.getByRole('button', { name: '关闭提示', exact: true }).click()
+  await batchDialog.getByText('生成与衔接说明', { exact: true }).click()
+  assert(await batchDialog.locator('.batch-generation-details').getAttribute('open') !== null)
+  await batchDialog.getByText('生成与衔接说明', { exact: true }).click()
+  await batchDialog.screenshot({ path: join(evidence, '02-dialogue-11s-fit.png') })
+  for (const changed of [
+    { ...timingOriginals[1], duration: 10, dialogue: '字'.repeat(50) },
+    { ...timingOriginals[2], duration: 16, dialogue: '' },
+  ]) {
+    assert((await page.evaluate(({ projectId, shot }) => window.director.command({ type: 'shot', projectId, shot }),
+      { projectId: project.id, shot: changed })).ok)
+  }
+  await batchDialog.getByText('2 个镜头超过当前模型的 15 秒上限，请拆分后生成。').waitFor()
+  assert.equal(await batchDialog.locator('.batch-timing-issue').count(), 2)
+  assert(await batchDialog.getByRole('button', { name: /^确认生成/ }).isDisabled())
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1120, 760))
+  await batchDialog.getByRole('button', { name: '取消选择超限镜头', exact: true }).scrollIntoViewIfNeeded()
+  await batchDialog.screenshot({ path: join(evidence, '02-dialogue-over-limit.png') })
+  assert(await batchDialog.evaluate((element) => element.scrollWidth <= element.clientWidth))
+  await batchDialog.getByRole('button', { name: '取消选择超限镜头', exact: true }).click()
+  assert.equal(await batchDialog.locator('.batch-shots input:checked').count(), project.shots.length - 2)
+  assert.equal(await batchDialog.locator('.batch-timing-alert').count(), 0)
+  assert(await batchDialog.locator('.batch-shots label').first().getByRole('checkbox').isChecked())
+  assert(await batchDialog.getByRole('button', { name: /^确认生成/ }).isEnabled())
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config }),
+    { ...timingConfig, models: { ...timingConfig.models, video: { provider: 'kling', model: 'kling-v2-6', region: 'cn' } } })).ok)
+  await batchDialog.getByText('1 个镜头超过当前模型的 10 秒上限，请拆分后生成。').waitFor()
+  assert.match(await batchDialog.locator('.batch-shots label').nth(3).innerText(), /6s → 10s/)
+  await batchDialog.getByRole('button', { name: '关闭对话框' }).click()
+  assert((await page.evaluate((config) => window.director.command({ type: 'config', config }), timingConfig)).ok)
+  assert((await page.evaluate(() => window.director.command({ type: 'clearKey' }))).ok)
+  for (const original of timingOriginals) {
+    assert((await page.evaluate(({ projectId, shot }) => window.director.command({ type: 'shot', projectId, shot }),
+      { projectId: project.id, shot: original })).ok)
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1540, 990))
   const archivedVideo = join(data, 'archived-shot.mp4')
   execFileSync('ffmpeg', [
     '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=320x180:r=24',
@@ -319,11 +528,14 @@ try {
   const mode = page.getByRole('combobox', { name: '视频生成模式' })
   assert.equal(await mode.inputValue(), 'plus')
   await mode.selectOption('default')
+  await page.getByRole('combobox', { name: '视频清晰度' }).selectOption('768p')
   await page.getByRole('button', { name: '保存设置' }).click()
   assert.equal((await page.evaluate(() => window.director.command({ type: 'snapshot' }))).state.config.instanceType, 'default')
+  assert.equal((await page.evaluate(() => window.director.command({ type: 'snapshot' }))).state.config.videoResolution, '768p')
   await page.getByRole('button', { name: '连接与设置', exact: true }).click()
   await page.getByRole('tab', { name: '视频模型' }).click()
   assert.equal(await page.getByRole('combobox', { name: '视频生成模式' }).inputValue(), 'default')
+  assert.equal(await page.getByRole('combobox', { name: '视频清晰度' }).inputValue(), '768p')
   assert.equal(await page.getByRole('textbox', { name: 'Workflow ID' }).count(), 0)
   assert.equal(await page.getByText('参数映射').count(), 0)
   await page.screenshot({ path: join(evidence, '05-provider-settings.png') })
@@ -436,7 +648,7 @@ try {
   const restored = await page.evaluate(() => window.director.command({ type: 'importArchive' }))
   assert(restored.ok, restored.error)
   assert.equal(restored.state.projects.length, 2)
-  assert.equal(restored.state.projects[0].media.length, 4)
+  assert.equal(restored.state.projects[0].media.length, saved.state.projects.find((item) => item.id === project.id).media.length)
   const restoredProject = restored.state.projects.find((item) => item.id !== project.id)
   await app.evaluate(({ dialog }) => {
     dialog.showSaveDialog = async () => { throw new Error('Project removal must not open a backup dialog') }
@@ -554,12 +766,15 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth),
     false,
   )
+  // Old installations may still have the retired global pause flag saved.
+  assert((await page.evaluate(() => window.director.command({ type: 'pause', paused: true }))).ok)
   await app.close()
   app = await launch()
   page = await app.firstWindow()
   await page.waitForFunction(() => !!window.director)
   snapshot = await page.evaluate(() => window.director.command({ type: 'snapshot' }))
   assert(snapshot.ok)
+  assert.equal(snapshot.state.config.paused, false)
   assert.equal(snapshot.state.projects.length, 1)
   assert.equal(snapshot.state.projects.find((p) => p.id === project.id).scriptArchives[0].shots[0].title,
     '桌面测试 · 已保存的镜头')
@@ -595,8 +810,13 @@ try {
         checks: [
           'welcome',
           'default list and canvas switch',
+          '3D previs camera and object keyframes, screenshots, silent MP4, cancellation and compact layout',
           'direct AI storyboard generation dialog',
           'shot edit',
+          'bulk asset linking and director settings at 1120px',
+          'video batch select all and clear selection',
+          '11 second dialogue fit, adapter duration limits, all timing blockers and selective deselection',
+          'mixed task ordering, record deletion, stop all without pausing and no pause button',
           'script edit',
           'script and video archive on script revision',
           'episode switching and unsaved draft persistence',
@@ -612,7 +832,7 @@ try {
           'project removal without backup prompt',
           'dark mode',
           '1120px desktop',
-          'restart persistence',
+          'restart persistence and legacy global pause removal',
           'OS-encrypted key and redacted snapshot',
         ],
         errors,
@@ -624,6 +844,10 @@ try {
     ),
   )
   console.log('Desktop verification passed. Evidence: ' + evidence)
+} catch (error) {
+  await page.screenshot({ path: join(evidence, 'desktop-failure.png') }).catch(() => {})
+  await writeFile(join(evidence, 'desktop-failure.html'), await page.content()).catch(() => {})
+  throw error
 } finally {
   await app.close().catch(() => {})
 }

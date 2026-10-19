@@ -14,7 +14,6 @@ import {
   Check,
   FileText,
   Play,
-  Pause,
   RotateCcw,
   Link2,
   X,
@@ -25,7 +24,8 @@ import {
   ChevronRight,
   Paperclip,
 } from 'lucide-react'
-import { mediaUrl, type AiTask, type Asset, type Job, type Project, type Shot } from '../shared/schema'
+import { mediaUrl, randomId, videoSizes, type AiTask, type Asset, type Job, type Project, type Shot } from '../shared/schema'
+import { isAITask, isExecutingTask, isFinishedTask, sortTasks, taskScheduledAt, type Task } from '../shared/tasks'
 import { AITaskProgress, Button, Empty, Field, Modal, Preview, statusNames, useWorkspace, Versions } from './ui'
 
 export function ScriptEditor({
@@ -443,7 +443,7 @@ export function AssetsView({ p, onGenerate }: { p: Project; onGenerate: (a: Asse
             primary
             onClick={() =>
               setDraft({
-                id: crypto.randomUUID(),
+                id: randomId(),
                 kind: 'character',
                 name: '',
                 description: '',
@@ -827,16 +827,15 @@ export function Tasks({ jobs, aiTasks, onClose }: { jobs: Job[]; aiTasks: AiTask
   const { run, state } = useWorkspace(),
     [attach, setAttach] = useState<Job | null>(null),
     [taskId, setTaskId] = useState(''),
-    [confirm, setConfirm] = useState<{ job: Job; action: 'retry' | 'cancel' } | null>(null)
-  const orderedAI = [
-    ...aiTasks.filter((task) => task.status === 'running'),
-    ...aiTasks.filter((task) => task.status === 'queued').reverse(),
-    ...aiTasks.filter((task) => !['queued', 'running'].includes(task.status)),
-  ]
+    [confirm, setConfirm] = useState<{ job: Job; action: 'retry' | 'cancel' } | null>(null),
+    [manage, setManage] = useState<{ type: 'delete'; task: Task } | { type: 'terminate' } | null>(null),
+    [managing, setManaging] = useState(false)
+  const ordered = sortTasks([...jobs, ...aiTasks])
+  const pending = ordered.filter((task) => !isFinishedTask(task) && !task.cancelRequested)
   return (
     <Modal
       title={t('任务中心')}
-      subtitle={t('暂停只停止新任务；AI 中断后需核对重试，视频任务可凭远端 ID 恢复查询。')}
+      subtitle={t('AI 中断后需核对重试，视频任务可凭远端 ID 恢复查询。')}
       wide
       onClose={onClose}
     >
@@ -845,16 +844,20 @@ export function Tasks({ jobs, aiTasks, onClose }: { jobs: Job[]; aiTasks: AiTask
           <span className="muted">
             {jobs.length + aiTasks.length} {t('条本地记录')}
           </span>
-          <Button onClick={() => void run({ type: 'pause', paused: !state.config.paused })}>
-            {state.config.paused ? <Play size={14} /> : <Pause size={14} />}{' '}
-            {state.config.paused ? t('继续队列') : t('暂停队列')}
-          </Button>
+          <div className="field-row task-toolbar">
+            <Button className="danger" disabled={!pending.length || managing} onClick={() => setManage({ type: 'terminate' })}>
+              <X size={14} />{t('全部终止任务')}
+            </Button>
+          </div>
         </div>
-        {aiTasks.length > 0 && <div className="job-list">
-          {orderedAI.map((task) => <article className="job" key={task.id}>
+        <p className="small muted task-order-note">{t('进行中的任务置顶，其余按安排时间从新到旧排列。')}</p>
+        {!ordered.length ? <Empty heading={t('队列很安静')}>{t('提交 AI 生成或视频任务后会显示在这里。')}</Empty> :
+          <div className="job-list">{ordered.map((task) => <article className={`job ${isExecutingTask(task) ? 'job-active' : ''}`}
+            key={task.id} data-task-id={task.id} data-task-status={task.status}>
+          {isAITask(task) ? <>
             <div className="row-between"><strong>{t(task.title.split(' · ')[0])} · {task.title.split(' · ').slice(1).join(' · ')}</strong>
-              <span className={`status ${task.status}`}>{t(task.status === 'queued' ? '排队中' : task.status === 'running' ? '生成中' : statusNames[task.status])}</span></div>
-            <p className="small muted">{state.projects.find((project) => project.id === task.projectId)?.title} · {new Date(task.createdAt).toLocaleString()}</p>
+              <span className={`status ${task.status}`}>{t(task.cancelRequested && task.status === 'running' ? '正在终止…' : task.cancelRequested && task.status === 'cancelled' ? '本地已终止' : task.status === 'queued' ? '排队中' : task.status === 'running' ? '生成中' : statusNames[task.status])}</span></div>
+            <p className="small muted">{state.projects.find((project) => project.id === task.projectId)?.title} · {new Date(taskScheduledAt(task)).toLocaleString()}</p>
             {task.model && <p className="small muted">{t(providerNames[task.model.provider])} {task.model.model}</p>}
             {task.remoteTaskId && <p className="small muted break">Task ID: {task.remoteTaskId}</p>}
             <AITaskProgress task={task} />
@@ -863,64 +866,76 @@ export function Tasks({ jobs, aiTasks, onClose }: { jobs: Job[]; aiTasks: AiTask
             <div className="field-row">
               {task.status === 'queued' && <Button onClick={() => void run({ type: 'aiTask', taskId: task.id, action: 'cancel' })}>{t('取消排队')}</Button>}
               {['failed', 'cancelled'].includes(task.status) && <Button onClick={() => void run({ type: 'aiTask', taskId: task.id, action: 'retry' })}>{t(task.remoteTaskId ? '继续查询原任务' : '核对后手动重试')}</Button>}
+              {isFinishedTask(task) && <Button className="danger" onClick={() => setManage({ type: 'delete', task })}><Trash2 size={13} />{t('删除记录')}</Button>}
             </div>
-          </article>)}
-        </div>}
-        {!jobs.length && !aiTasks.length ? (
-          <Empty heading={t('队列很安静')}>{t('提交 AI 生成或视频任务后会显示在这里。')}</Empty>
-        ) : (
-          <div className="job-list">
-            {jobs.map((j) => (
-              <article className="job" key={j.id}>
+          </> : <>
                 <div className="row-between">
-                  <strong>{j.snapshot.title}</strong>
-                  <span className={`status ${j.status}`}>{t(statusNames[j.status])}</span>
+                  <strong>{task.snapshot.title}</strong>
+                  <span className={`status ${task.status}`}>{t(task.cancelRequested && task.status === 'submitting' ? '正在终止…' : task.cancelRequested && task.status === 'cancelled' ? '本地已终止' : statusNames[task.status])}</span>
                 </div>
                 <p className="small muted">
-                  {new Date(j.createdAt).toLocaleString()} · workflow {j.workflowId}
-                  {j.model && ` · ${t(providerNames[j.model.provider])}${j.model.model ? ` / ${j.model.model}` : ''}`}
-                  {(!j.model || j.model.provider === 'runninghub') && j.instanceType && ` · ${j.instanceType === 'plus' ? 'Plus' : 'Standard'}`}
+                  {state.projects.find((project) => project.id === task.projectId)?.title} · {new Date(taskScheduledAt(task)).toLocaleString()} · workflow {task.workflowId}
+                  {task.model && ` · ${t(providerNames[task.model.provider])}${task.model.model ? ` / ${task.model.model}` : ''}`}
+                  {(!task.model || task.model.provider === 'runninghub') && task.instanceType && ` · ${task.instanceType === 'plus' ? 'Plus' : 'Standard'}`}
+                  {(!task.model || task.model.provider === 'runninghub') && task.instanceType && task.aspect &&
+                    ` · ${videoSizes[task.videoResolution || '480p'][task.aspect].join('×')}`}
                 </p>
-                {j.taskId && <p className="mono small break">Task ID: {j.taskId}</p>}
-                {j.error && <p className="job-error">{t(j.error)}</p>}
+                {task.taskId && <p className="mono small break">Task ID: {task.taskId}</p>}
+                {task.error && <p className="job-error">{t(task.error)}</p>}
                 <div className="field-row">
-                  {j.status === 'paused' && (
+                  {task.status === 'paused' && (
                     <Button
-                      onClick={() => void run({ type: 'job', jobId: j.id, action: 'resume' })}
+                      onClick={() => void run({ type: 'job', jobId: task.id, action: 'resume' })}
                     >
                       <Play size={13} />
                       {t('继续原任务')}
                     </Button>
                   )}
-                  {['failed', 'cancelled'].includes(j.status) && (
-                    <Button onClick={() => setConfirm({ job: j, action: 'retry' })}>
+                  {['failed', 'cancelled'].includes(task.status) && (
+                    <Button onClick={() => setConfirm({ job: task, action: 'retry' })}>
                       <RotateCcw size={13} />
                       {t('重新提交')}
                     </Button>
                   )}
-                  {['uncertain', 'paused'].includes(j.status) && (
+                  {task.status === 'cancelled' && task.taskId && <Button onClick={() => void run({ type: 'job', jobId: task.id, action: 'attach', taskId: task.taskId })}>
+                    <Play size={13} />{t('继续查询原任务')}</Button>}
+                  {['uncertain', 'paused'].includes(task.status) && (
                     <Button
                       onClick={() => {
-                        setAttach(j)
-                        setTaskId(j.taskId || '')
+                        setAttach(task)
+                        setTaskId(task.taskId || '')
                       }}
                     >
                       <Link2 size={13} />
                       {t('绑定远端任务 ID')}
                     </Button>
                   )}
-                  {!['succeeded', 'cancelled', 'failed'].includes(j.status) && (
-                    <Button onClick={() => setConfirm({ job: j, action: 'cancel' })}>
+                  {!isFinishedTask(task) && (!task.cancelRequested || task.status === 'uncertain') && (
+                    <Button onClick={() => setConfirm({ job: task, action: 'cancel' })}>
                       <X size={13} />
                       {t('取消')}
                     </Button>
                   )}
+                  {isFinishedTask(task) && <Button className="danger" onClick={() => setManage({ type: 'delete', task })}><Trash2 size={13} />{t('删除记录')}</Button>}
                 </div>
-              </article>
-            ))}
-          </div>
-        )}
+          </>}
+          </article>)}</div>}
       </div>
+      {manage && <Modal title={t(manage.type === 'delete' ? '删除这条任务记录？' : '终止全部任务？')}
+        onClose={() => { if (!managing) setManage(null) }}>
+        <div className="modal-body"><p>{t(manage.type === 'delete'
+          ? '只删除本地任务记录，已生成素材和剧本仍保留。删除后不能再通过此记录查询远端任务。'
+          : '取消全部排队任务，停止本地生成与下载。之后提交的新任务仍会正常执行。已提交的远端任务会尝试取消；不支持取消或提交结果未知时，会保留任务 ID 供人工核实。已发生费用以服务商为准。')}</p>
+          {manage.type === 'delete' && <p className="small muted">{isAITask(manage.task) ? manage.task.title : manage.task.snapshot.title}</p>}
+        </div>
+        <div className="modal-footer"><Button disabled={managing} onClick={() => setManage(null)}>{t('返回')}</Button>
+          <Button primary disabled={managing} onClick={async () => {
+            setManaging(true)
+            const reply = await run(manage.type === 'delete' ? { type: 'deleteTask', taskId: manage.task.id } : { type: 'terminateTasks' })
+            setManaging(false)
+            if (reply.ok) setManage(null)
+          }}>{managing ? t('正在处理…') : t(manage.type === 'delete' ? '确认删除记录' : '确认全部终止')}</Button></div>
+      </Modal>}
       {attach && (
         <Modal
           title={t('绑定已有任务')}

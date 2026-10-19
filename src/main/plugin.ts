@@ -17,6 +17,7 @@ type Options = {
   snapshot(): Snapshot
   command(raw: unknown, files: CommandFiles): Promise<Reply>
   mediaFile(url: URL): string
+  previsFrame?(sessionId: string, index: number, bytes: Uint8Array): Promise<void>
 }
 const maxJson = 4 * 1024 * 1024
 const maxUpload = 200 * 1024 * 1024
@@ -36,10 +37,14 @@ const mime = (file: string) => ({ '.html': 'text/html; charset=utf-8', '.js': 't
   '.webp': 'image/webp', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav', '.srt': 'text/plain; charset=utf-8', '.zip': 'application/zip' }[extname(file)] || 'application/octet-stream')
 
-export async function studioHtml(root: string) {
+export async function studioHtml(root: string, base?: string) {
   let html = await readFile(join(root, 'index.html'), 'utf8')
   html = html.replace(/<meta\s+http-equiv="Content-Security-Policy"[\s\S]*?>/i, '')
   for (const match of [...html.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)]) {
+    if (base) {
+      html = html.replace(match[0], () => `<script type="module" src="${new URL(match[1], base).href}"></script>`)
+      continue
+    }
     const script = await readFile(inside(root, match[1].replace(/^\.\//, '')), 'utf8')
     html = html.replace(match[0], () => `<script type="module">${script.replace(/<\/script/gi, '<\\/script')}</script>`)
   }
@@ -110,10 +115,10 @@ export async function startPluginServer(options: Options) {
     }
     const input = pluginInputs[action].parse(call.arguments)
     if (!('command' in input)) throw new Error('缺少命令')
-    if (action === 'generate' && (input.command.type === 'queue' ||
+    if (action === 'generate' && (input.command.type === 'queue' || input.command.type === 'terminateTasks' ||
         (input.command.type === 'job' && input.command.action === 'retry')) &&
         (!('confirmed' in input) || input.confirmed !== true))
-      throw new Error('视频会消耗 RH 币；请先获得用户明确授权，再传入 confirmed:true')
+      throw new Error('付费生成或全部终止任务需先获得用户明确授权，再传入 confirmed:true')
     const files: string[] = []
     if (action === 'import') {
       const { paths } = pluginInputs.import.parse(call.arguments)
@@ -156,7 +161,7 @@ export async function startPluginServer(options: Options) {
         case 'resources/read': {
           z.object({ uri: z.literal(studioUri) }).parse(message.params)
           result = { contents: [{ uri: studioUri, mimeType: 'text/html;profile=mcp-app',
-            text: await studioHtml(options.renderer), _meta: { ui: { csp: {
+            text: await studioHtml(options.renderer, base), _meta: { ui: { csp: {
               connectDomains: [origin], resourceDomains: [origin] }, prefersBorder: false } } }] }
           break
         }
@@ -185,6 +190,19 @@ export async function startPluginServer(options: Options) {
       if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return }
       const path = parts.slice(2).join('/')
       if (request.method === 'POST') {
+        if (path.startsWith('previs-frame/')) {
+          const [, sessionId, index] = path.split('/')
+          if (!options.previsFrame) throw new Error('预演渲染不可用')
+          const chunks: Buffer[] = []
+          let size = 0
+          for await (const bytes of request) {
+            size += bytes.length
+            if (size > 8 * 1024 * 1024) throw new Error('预演帧过大')
+            chunks.push(Buffer.from(bytes))
+          }
+          await options.previsFrame(sessionId, Number(index), Buffer.concat(chunks))
+          return sendJson(response, 200, { ok: true })
+        }
         if (path === 'upload') {
           if (uploads.size >= 100) throw new Error('待处理文件过多，请先完成当前导入')
           const name = basename(url.searchParams.get('name') || 'upload').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(-180)

@@ -28,12 +28,13 @@ function accountEnvironment() {
   return env
 }
 
-async function command(args: string[], input?: string, timeoutMs = 300000) {
+async function command(args: string[], input?: string, timeoutMs = 300000, signal?: AbortSignal) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
     const child = spawn(cli, args, {
       windowsHide: true,
       env: accountEnvironment(),
       stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      signal,
     })
     let stdout = '',
       stderr = '',
@@ -118,12 +119,13 @@ export class CodexText {
       throw new Error('ChatGPT 账号授权未完成，请重试。')
   }
 
-  async image(prompt: string, aspect: Project['aspect']) {
+  async image(prompt: string, aspect: Project['aspect'], signal?: AbortSignal) {
     if (this.busy) throw new Error('已有一轮 AI 生成正在进行，请等待完成。')
     this.busy = true
     try {
       if (!(await this.connected())) throw new Error('请先在连接与设置中授权 ChatGPT 账号。')
-      return await generateCodexImage(cli, accountEnvironment(), prompt, aspect)
+      signal?.throwIfAborted()
+      return await generateCodexImage(cli, accountEnvironment(), prompt, aspect, signal)
     } finally {
       this.busy = false
     }
@@ -132,7 +134,7 @@ export class CodexText {
   async generate(
     prompt: string,
     schema?: Record<string, unknown>,
-    options?: { workingDirectory?: string; images?: string[] },
+    options?: { workingDirectory?: string; images?: string[]; signal?: AbortSignal },
   ) {
     if (this.busy) throw new Error('已有一轮 AI 对话正在生成，请等待完成。')
     this.busy = true
@@ -140,6 +142,7 @@ export class CodexText {
     const schemaPath = schema ? join(workspace, `response-${randomUUID()}.json`) : undefined
     try {
       if (!(await this.connected())) throw new Error('请先在连接与设置中授权 ChatGPT 账号。')
+      options?.signal?.throwIfAborted()
       await mkdir(workspace, { recursive: true })
       if (schemaPath) await writeFile(schemaPath, JSON.stringify(schema), 'utf8')
       const args = [
@@ -163,7 +166,7 @@ export class CodexText {
       ]
       // The CLI may retry a timed-out stream before falling back to HTTP. A full
       // storyboard can take longer than the five-minute default command limit.
-      const result = await command(args, prompt, 15 * 60 * 1000)
+      const result = await command(args, prompt, 15 * 60 * 1000, options?.signal)
       const final = codexFinalMessage(result.stdout)
       if (result.code !== 0 || !final)
         throw new Error(

@@ -5,6 +5,102 @@ export type Locale = Config['locale']
 
 // Keys are the existing Chinese interface copy. Project and user content is never translated.
 export const en: Record<string, string> = {
+  'H3 参考视频合计最多 15 秒；同时引用前镜时，预演最长 13 秒，前镜按剩余额度取真实尾部并保留音轨。':
+    'H3 accepts up to 15 seconds of reference video. With a preceding shot, previs is limited to 13 seconds; the preceding reference uses its actual tail with audio within the remaining budget.',
+  '白模预演参考：': 'Previs reference: ',
+  '已启用预演参考的镜头需要当前版本白模视频、相同生成时长及 RunningHub H3 Ref2VA。请调整后重新导出，或关闭该镜头的预演参考。':
+    'Shots using previs require a current reference, matching duration and RunningHub H3 Ref2VA. Adjust and re-export, or disable previs for that shot.',
+  '3D 预演': '3D previs', '3D 预演台': '3D previs studio', '打开 3D 预演': 'Open 3D previs',
+  '摄影机': 'Camera', '人物': 'Person', '方块': 'Box', '桌子': 'Table', '椅子': 'Chair', '墙体': 'Wall', '门框': 'Door', '球体': 'Sphere', '模型': 'Model',
+  '站立': 'Idle', '行走': 'Walk', '奔跑': 'Run', '坐下': 'Sit', '挥手': 'Wave',
+  '预演镜头': 'Previs shot', '保存预演': 'Save previs', '导出构图图': 'Capture composition', '导出白模视频': 'Render previs video',
+  '请先完成或取消预演导出': 'Finish or cancel the previs export first', '无法启动 3D 预演': 'Could not start the 3D viewport',
+  '模型加载失败': 'Could not load the model', '已取消预演导出': 'Previs export cancelled', '预演导出失败': 'Previs export failed',
+  '未保存': 'Unsaved', '正在编码并保存…': 'Encoding and saving…',
+  '逐帧渲染': 'Rendering frames', '片场与对象': 'SET & OBJECTS', '当前片场': 'Current set',
+  '副本': 'Copy', '复制片场': 'Duplicate set', '添加资源': 'ADD OBJECTS', '导入 GLB 模型': 'Import GLB model',
+  '内嵌贴图 GLB · 最大 50 MB': 'Embedded GLB · up to 50 MB', '添加房间模板': 'Add room layout',
+  '撤销': 'Undo', '重做': 'Redo', '吸附': 'Snap', '观察视角': 'Viewport', '导演视角': 'Director view',
+  '俯视': 'Top view', '摄影机视角': 'Camera view', '正在准备 3D 视窗…': 'Preparing 3D viewport…', '实时取景': 'LIVE CAMERA',
+  '在地面点击布点，完成后应用轨迹。': 'Click points on the ground, then apply the path.',
+  '拖动环绕 · 中键平移 · 滚轮缩放 · W/E/R 变换': 'Drag to orbit · middle drag to pan · scroll to zoom · W/E/R to transform',
+  '取消绘制': 'Cancel path', '绘制轨迹': 'Draw path', '应用轨迹': 'Apply path',
+  '摄影机参数': 'CAMERA', '对象属性': 'OBJECT', '片场属性': 'SET', '机位位置': 'Camera position', '注视位置': 'Look-at target',
+  '视野角度 FOV': 'Field of view', '当前视角设为机位': 'Use current view as camera', '运镜主体': 'Camera subject',
+  '当前注视点': 'Current look-at point', '推近': 'Dolly in', '平移': 'Truck', '环绕': 'Orbit', '跟随': 'Follow', '重置机位': 'Reset camera',
+  '对象名称': 'Object name', '未关联': 'Unlinked', '位置': 'Position', '尺寸': 'Scale',
+  '朝向（度）': 'Heading (degrees)', '标识颜色': 'Marker color', '基础动作': 'Action', '动作结束时间': 'Action end (seconds)',
+  '从当前时间添加动作': 'Add action at playhead', '复制': 'Duplicate', '片场名称': 'Set name', '新片场': 'New set',
+  '对象已锁定，请在左侧解锁后编辑。': 'Unlock this object in the object list to edit it.',
+  '关键帧': 'Keyframe', '删除当前关键帧 / 动作': 'Remove keyframe / action', '预演时间': 'Previs time', '当前对白': 'Dialogue',
+  '镜头预演素材': 'PREVIS OUTPUTS', '白模只参考空间、动作和运镜；外观沿用正式资产，结果需逐镜审看。':
+    'Previs guides space, action and camera motion. Final appearance comes from your assets. Review each generated shot.',
+  '构图图': 'Composition', '构图图版本': 'Composition version', '白模视频': 'Previs video',
+  '视频生成使用预演参考': 'Use previs for video generation', '当前版本': 'Current', '需重新导出': 'Re-export required',
+  '读音备注（不朗读）': 'Pronunciation notes (not spoken)',
+  '每行填写“词语=读音”，例如“重庆=chóng qìng”；数字、英文缩写可写明读法。':
+    'Enter one term=pronunciation per line, e.g. 重庆=chóng qìng. Specify how numbers and acronyms should be read.',
+  '只填实际说出的文字；多人对白每行填写“角色：台词”，动作和读音说明单独填写。':
+    'Enter only spoken words. For multiple speakers, use one Speaker: line per turn. Keep actions and pronunciation guidance separate.',
+  '台词规范更新需在当前任务结束后重启开发版。':
+    'Restart the development app after current tasks finish to activate the updated dialogue rules.',
+  '实际朗读台词预览': 'Spoken script preview',
+  '无台词：不生成人声。': 'No dialogue: do not generate speech.',
+  '说话角色尚未指定，建议填写角色名或旁白。': 'No speaker selected. Enter a character name or narrator.',
+  '读音指导（不朗读）：': 'Pronunciation guidance (not spoken): ',
+  '台词与读音核对': 'Review dialogue and pronunciation',
+  '以下是提交给工作流的朗读清单；保留原文，不增删词。生成后仍需核对实际音轨。':
+    'This spoken script is submitted verbatim to the workflow. Review the actual audio after generation.',
+  '{count} 个镜头的台词设置需要修正，请展开核对。': '{count} shots have dialogue settings to correct. Expand to review.',
+  '台词中不能包含工作流的语音控制标签，请只填写实际要说的文字。':
+    'Dialogue must not contain workflow speech tags. Enter only spoken words.',
+  '对白只有角色标签，请填写台词或清空对白。': 'The dialogue contains only speaker labels. Enter spoken words or clear the field.',
+  '读音备注请每行填写“词语=读音”，备注本身不会被朗读。':
+    'Use one term=pronunciation per line. The notes themselves are not spoken.',
+  '读音备注的词语必须出现在本镜台词中，读音不能为空。':
+    'Each term must occur in this shot’s dialogue and have a pronunciation.',
+  '未指定角色': 'Unspecified speaker',
+  '全选': 'Select all',
+  '清空选择': 'Clear selection',
+  '全部终止任务': 'Stop all tasks',
+  '删除记录': 'Delete record',
+  '确认删除记录': 'Confirm deletion',
+  '删除这条任务记录？': 'Delete this task record?',
+  '终止全部任务？': 'Stop all tasks?',
+  '确认全部终止': 'Confirm stop all',
+  '正在终止…': 'Stopping…',
+  '本地已终止': 'Stopped locally',
+  '任务正在同步或终止，请稍后重试': 'The task is syncing or stopping. Try again shortly.',
+  '正在处理…': 'Processing…',
+  '进行中的任务置顶，其余按安排时间从新到旧排列。': 'Running tasks stay at the top; other tasks are ordered by scheduling time, newest first.',
+  '只删除本地任务记录，已生成素材和剧本仍保留。删除后不能再通过此记录查询远端任务。': 'Delete the local task record while keeping generated media and scripts. Remote queries will no longer be available through this record.',
+  '取消全部排队任务，停止本地生成与下载。之后提交的新任务仍会正常执行。已提交的远端任务会尝试取消；不支持取消或提交结果未知时，会保留任务 ID 供人工核实。已发生费用以服务商为准。': 'Cancel all waiting tasks and stop local generation and downloads. New tasks submitted afterward will run normally. Remote cancellation will be attempted where supported. Task IDs are kept for verification when cancellation is unsupported or submission is uncertain. Provider charges still apply.',
+  '批量应用到其他镜头': 'Apply settings to other shots',
+  '批量应用镜头设置': 'Apply shot settings in bulk',
+  '参数来源': 'Source shot',
+  '统一资产、场景、景别、运镜、光线或时长。': 'Apply assets, scene, framing, camera, lighting or duration in bulk.',
+  '是否将其他镜头也绑定此资产？': 'Link this asset to other shots too?',
+  '选择镜头并应用': 'Choose shots and apply',
+  '仅当前镜头': 'This shot only',
+  '选择要统一的内容': 'Choose settings to apply',
+  '只修改勾选的字段，镜头动作、对白和素材版本保持独立。': 'Only checked settings will change. Shot action, dialogue and media versions stay independent.',
+  '未选择资产': 'No assets selected',
+  '资产绑定方式': 'Asset linking mode',
+  '追加绑定，保留原有关联': 'Add links, keep existing assets',
+  '替换关联，以勾选资产为准': 'Replace links with checked assets',
+  '将替换目标镜头的全部资产关联；未勾选的原有关联会被移除。': 'Replace all asset links on target shots. Existing unchecked links will be removed.',
+  '选择目标镜头': 'Choose target shots',
+  '应用范围': 'Apply to',
+  '同场景其他镜头': 'Other shots in this scene',
+  '本集其他镜头': 'Other shots in this episode',
+  '手动选择镜头': 'Choose shots manually',
+  '未设置场景': 'No scene set',
+  '本集没有其他镜头': 'No other shots in this episode',
+  '将更新': 'Will update',
+  '项设置': 'settings',
+  '正在应用…': 'Applying…',
+  '确认批量应用': 'Confirm bulk apply',
+  '单批最多生成 100 个镜头，请减少选择。': 'A batch supports up to 100 video shots. Reduce the selection.',
   'AI 润色': 'AI polish',
   'AI 润色选项': 'AI script polishing options',
   '要润色这版剧本吗？': 'Polish this script draft?',
@@ -102,8 +198,8 @@ export const en: Record<string, string> = {
   恢复到版本: 'Restore version',
   任务中心: 'Task center',
   生成中: 'Generating',
-  '暂停只停止新任务；AI 中断后需核对重试，视频任务可凭远端 ID 恢复查询。':
-    'Pausing stops new tasks. Check interrupted AI tasks before retrying; video tasks can resume polling with their remote ID.',
+  'AI 中断后需核对重试，视频任务可凭远端 ID 恢复查询。':
+    'Check interrupted AI tasks before retrying; video tasks can resume polling with their remote ID.',
   打开项目存档: 'Open project archive',
   连接与设置: 'Connections & settings',
   本地工作空间: 'Local workspace',
@@ -155,7 +251,6 @@ export const en: Record<string, string> = {
     'Create shots from your script or add them manually. Script, images, and video share one canvas.',
   '拖动画布平移 · 滚轮缩放 · 点击卡片编辑': 'Drag to pan · Scroll to zoom · Click a card to edit',
   任务队列空闲: 'Task queue idle',
-  新提交已暂停: 'New submissions paused',
   所有改动保存在本机: 'All changes saved locally',
   '移除这个镜头？': 'Remove this shot?',
   '镜头将从分镜列表移除，素材文件和历史版本会保留。':
@@ -175,10 +270,18 @@ export const en: Record<string, string> = {
   '仅允许使用 RH币生成；企业共享 Key 和可能扣钱包的节点会被阻止。':
     'Video generation uses RH coins only. Shared enterprise keys and nodes that may charge the wallet are blocked.',
   选择需要运行的镜头: 'Select shots to run',
-  '确认生成时会自动延长 {count} 个镜头，给对白留足时间；时长增加可能提高生成费用。':
-    'Generating will extend {count} shots to fit their dialogue. Longer videos may cost more.',
-  '的对白约需 {duration} 秒；请先拆分对白或手动延长镜头。':
-    ' needs about {duration} seconds for dialogue. Split the dialogue or extend the shot first.',
+  '确认生成时会自动延长 {count} 个镜头，按对白估算或模型要求补足时长；时长增加可能提高生成费用。':
+    'Generating will extend {count} shots for estimated dialogue or model requirements. Longer videos may cost more.',
+  '当前模型支持 {minimum}–{maximum} 秒；对白时长按正常语速估算。':
+    'The current model supports {minimum}–{maximum} seconds. Dialogue timing is estimated at a normal speaking pace.',
+  '可选时长：': 'Available durations: ',
+  超限: 'Over limit',
+  '{count} 个镜头超过当前模型的 {maximum} 秒上限，请拆分后生成。':
+    '{count} shots exceed the current model’s {maximum}-second limit. Split them before generating.',
+  '对白估算约 {duration} 秒': 'Estimated dialogue: {duration} seconds',
+  '镜头设置为 {duration} 秒': 'Shot duration: {duration} seconds',
+  取消选择超限镜头: 'Deselect shots over the limit',
+  生成与衔接说明: 'Generation and continuity details',
   编辑这个镜头: 'Edit this shot',
   一个镜头失败时暂停同组尚未提交的镜头: 'Pause remaining shots in the group if one fails',
   '保存为分组（可选）': 'Save as group (optional)',
@@ -325,6 +428,13 @@ export const en: Record<string, string> = {
   '已内置指定工作流，使用 RunningHub 中国站。只接受消耗 RH币的消费级会员 Key，不使用钱包余额。':
     'The built-in workflow runs on RunningHub China. Only consumer membership keys billed in RH coins are accepted; wallet billing is blocked.',
   视频生成模式: 'Video generation mode',
+  视频清晰度: 'Video resolution',
+  '标准（480p 档）': 'Standard (480p tier)',
+  '高清（768p 档）': 'High definition (768p tier)',
+  '仅用于后续新建任务；高清增加计算量，可能延长生成时间并提高费用。':
+    'Applies to new tasks only. Higher resolution adds computation and may increase generation time and cost.',
+  '当前开发进程尚不支持清晰度设置，请在现有任务结束后重启开发版。':
+    'This development process does not support resolution settings yet. Restart it after existing tasks finish.',
   'Plus（48 GB 显存）': 'Plus (48 GB VRAM)',
   'Standard（24 GB 显存）': 'Standard (24 GB VRAM)',
   站点: 'Site',
@@ -577,11 +687,7 @@ export const en: Record<string, string> = {
   还没有可预览的镜头: 'No shots to preview yet',
   '在导演台中新建镜头，或从 ChatGPT 导入分镜。':
     'Create shots on the director board or import a storyboard from ChatGPT.',
-  '暂停只停止新提交。远端已生成的任务可在应用重启后继续查询。':
-    'Pause stops new submissions only. Remote tasks can be checked after restarting the app.',
   条本地记录: 'local records',
-  继续队列: 'Resume queue',
-  暂停队列: 'Pause queue',
   队列很安静: 'The queue is quiet',
   '在导演画布生成一个视频，任务会出现在这里。':
     'Generate a video from the director canvas and its task will appear here.',

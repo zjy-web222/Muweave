@@ -12,6 +12,7 @@ import {
 } from '../shared/models'
 import { Button, Field, Modal, useWorkspace } from './ui'
 import { useT } from './i18n'
+import { VideoResolutionField } from './VideoResolutionField'
 
 const labels = { text: '文字模型', image: '图片模型', video: '视频模型' } as const
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -203,6 +204,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                       <option value="default">{t('Standard（24 GB 显存）')}</option>
                     </select>
                   </Field>
+                  <VideoResolutionField value={config.videoResolution} ready={state.videoResolutionReady}
+                    onChange={(videoResolution) => patch({ videoResolution })} />
                 </>
               ) : (
                 <>

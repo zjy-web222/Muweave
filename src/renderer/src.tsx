@@ -45,16 +45,21 @@ import {
   videoWorkflow,
   replySchema,
 } from '../shared/schema'
-import { minimumDialogueDuration } from '../shared/director'
+import { planVideoTiming, videoDurationLimits } from '../shared/director'
 import { planVideoContinuity } from '../shared/continuity'
 import { credentialId, providerNames } from '../shared/models'
 import { Button, Empty, Modal, Field, Preview, Workspace, Working } from './ui'
 import Canvas from './Canvas'
 import Inspector from './Inspector'
+import { VideoResolutionField } from './VideoResolutionField'
+import { DialoguePreview } from './DialoguePreview'
+import { dialoguePlan } from '../shared/dialogue'
 import { CreateDialog, GenerationDialog, StoryboardDialog, SettingsDialog, ExportDialog } from './Dialogs'
 import { AssetsView, CutView, ScriptEditor, Tasks } from './Production'
 import './styles.css'
 import { Language, translate } from './i18n'
+import { isPrevisCurrent } from '../shared/previs'
+const Previs = React.lazy(() => import('./Previs'))
 
 type Stage = 'script' | 'assets' | 'board' | 'cut'
 type Generator = {
@@ -89,7 +94,7 @@ function App() {
     [epid, setEpid] = useState(''),
     [selected, setSelected] = useState(''),
     [stage, setStage] = useState<Stage>('board'),
-    [view, setView] = useState<'canvas' | 'list'>('list'),
+    [view, setView] = useState<'canvas' | 'list' | 'previs'>('list'),
     [inspector, setInspector] = useState(true),
     [query, setQuery] = useState(''),
     [toast, setToast] = useState(''),
@@ -221,12 +226,18 @@ function App() {
       [...(state?.jobs.filter((j) =>
         ['queued', 'running', 'submitting', 'downloading'].includes(j.status),
       ) || []), ...pendingAI]
-  const batchTiming = shots.filter((item) => batch?.includes(item.id)).map((item) => ({
-    shot: item,
-    required: minimumDialogueDuration(item.dialogue),
+  const videoProvider = state?.config.models.video.provider || 'runninghub'
+  const videoLimits = videoDurationLimits(videoProvider)
+  const shotTiming = new Map(shots.map((shot) => [shot.id, planVideoTiming(shot, videoProvider)]))
+  const batchTiming = shots.filter((shot) => batch?.includes(shot.id)).map((shot) => ({
+    shot, ...shotTiming.get(shot.id)!,
   }))
-  const autoFit = batchTiming.filter(({ shot, required }) => required > shot.duration && required <= 10)
-  const needsSplit = batchTiming.filter(({ shot, required }) => required > shot.duration && required > 10)
+  const autoFit = batchTiming.filter(({ shot, duration, issue }) => !issue && duration > shot.duration)
+  const needsSplit = batchTiming.filter(({ issue }) => !!issue)
+  const previsIssues = p ? batchTiming.filter(({ shot, duration }) => shot.usePrevis &&
+    (videoProvider !== 'runninghub' || !isPrevisCurrent(p, shot) || duration !== shot.duration ||
+      (Math.ceil(duration * 24) / 24 > 13 && !!planVideoContinuity(p, shot, new Set(batch || []), state?.jobs || []).previous))) : []
+  const dialogueIssues = p ? batchTiming.filter(({ shot }) => dialoguePlan(p, shot).errors.length) : []
   const selectedArchive = p?.scriptArchives.find((item) => item.id === scriptArchiveId) ||
     p?.scriptArchives.at(-1)
   const archivedShot = selectedArchive?.shots.find((item) => item.id === archiveShotId) ||
@@ -623,7 +634,7 @@ function App() {
                   beforeEpisodeChange={beforeEpisodeChange}
                 />
                 {stage === 'board' ? (
-                  <div className="director-body">
+                  <div className={`director-body ${view === 'previs' ? 'previs-open' : ''}`}>
                     <div className="board-main">
                       <div className="board-heading">
                         <div>
@@ -651,18 +662,19 @@ function App() {
                         <div className="segmented">
                           <button
                             className={view === 'canvas' ? 'active' : ''}
-                            onClick={() => setView('canvas')}
+                            onClick={async () => { if (!beforeEpisodeChange.current || await beforeEpisodeChange.current()) setView('canvas') }}
                           >
                             <PanelsTopLeft size={14} />
                             {t('画布')}
                           </button>
                           <button
                             className={view === 'list' ? 'active' : ''}
-                            onClick={() => setView('list')}
+                            onClick={async () => { if (!beforeEpisodeChange.current || await beforeEpisodeChange.current()) setView('list') }}
                           >
                             <List size={14} />
                             {t('列表')}
                           </button>
+                          <button className={view === 'previs' ? 'active' : ''} disabled={!shots.length} onClick={() => setView('previs')}><Layers3 size={14} />{t('3D 预演')}</button>
                         </div>
                         <div className="search">
                           <Search size={13} />
@@ -711,7 +723,9 @@ function App() {
                         </div>
                       </div>
                       <div className="canvas-area">
-                        {filtered.length ? (
+                        {view === 'previs' && shot ? <React.Suspense fallback={<div className="previs-loading"><Working /> {t('正在准备 3D 视窗…')}</div>}>
+                          <Previs key={`${p.id}-${shot.id}`} p={p} shot={shot} shots={shots} onSelect={chooseShot} beforeLeave={beforeEpisodeChange} />
+                        </React.Suspense> : filtered.length ? (
                           view === 'canvas' ? (
                             <Canvas
                               key={`${p.id}-${episodeId}`}
@@ -814,7 +828,7 @@ function App() {
                               : t('任务队列空闲')}
                           </span>
                           <span className="muted">
-                            {state.config.paused ? t('新提交已暂停') : t('所有改动保存在本机')}
+                            {t('所有改动保存在本机')}
                           </span>
                         </div>
                         <span>
@@ -823,7 +837,7 @@ function App() {
                         </span>
                       </footer>
                     </div>
-                    {inspector && shot && (
+                    {inspector && shot && view !== 'previs' && (
                       <Inspector
                         key={shot.id}
                         p={p}
@@ -831,6 +845,7 @@ function App() {
                         onGenerate={(s, slot) => setGenerator({ kind: 'image', shot: s, slot })}
                         onVideo={video}
                         onDelete={() => deleteShot(shot)}
+                        onPrevis={() => setView('previs')}
                       />
                     )}
                   </div>
@@ -965,14 +980,29 @@ function App() {
             onClose={() => setBatch(null)}
           >
             <div className="modal-body">
-              <p>{t('选择需要运行的镜头')}</p>
-              <div className="batch-shots">
+              <div className="row-between batch-selection-toolbar">
+                <span>{t('选择需要运行的镜头')} · {batch.length} / {shots.length}</span>
+                <div className="field-row">
+                  <Button disabled={!shots.length || shots.every((shot) => batch.includes(shot.id))}
+                    onClick={() => setBatch(shots.map((shot) => shot.id))}>{t('全选')}</Button>
+                  <Button disabled={!batch.length} onClick={() => setBatch([])}>{t('清空选择')}</Button>
+                </div>
+              </div>
+              <p className="small muted batch-duration-limit">
+                {t('当前模型支持 {minimum}–{maximum} 秒；对白时长按正常语速估算。')
+                  .replace('{minimum}', String(videoLimits.minimum)).replace('{maximum}', String(videoLimits.maximum))}
+                {videoLimits.options && ` ${t('可选时长：')}${videoLimits.options.join(' / ')}s`}
+              </p>
+              {state.config.models.video.provider === 'runninghub' && <VideoResolutionField
+                value={state.config.videoResolution} ready={state.videoResolutionReady} aspect={p.aspect}
+                onChange={(videoResolution) => void run({ type: 'config', config: { ...state.config, videoResolution } })} />}
+              <div className={`batch-shots${needsSplit.length ? ' has-timing-issues' : ''}`}>
                 {shots.map((s) => {
-                  const required = minimumDialogueDuration(s.dialogue)
+                  const timing = shotTiming.get(s.id)!
                   const plan = planVideoContinuity(p, s, new Set(batch), state.jobs)
                   const before = p.shots.find((shot) => shot.id === plan.previous?.shotId)
                   const after = p.shots.find((shot) => shot.id === plan.next?.shotId)
-                  return <label key={s.id} className={required > s.duration ? 'needs-timing' : ''}>
+                  return <label key={s.id} className={timing.issue || timing.duration > s.duration ? 'needs-timing' : ''}>
                     <input
                       type="checkbox"
                       checked={batch.includes(s.id)}
@@ -987,26 +1017,55 @@ function App() {
                         {t('首帧：')}{before ? `${before.title} · ${t(plan.previous?.videoMediaId ? '视频尾帧' : '等待新视频尾帧')}` : s.firstMediaId ? t('手动首帧') : t('无前镜视频')}
                         {' / '}{t('尾帧：')}{after ? `${after.title} · ${t('保留视频首帧')}` : s.lastMediaId ? t('手动尾帧') : t('无后镜视频')}
                       </span>}
+                      {batch.includes(s.id) && s.usePrevis && <span className={`batch-shot-boundaries ${previsIssues.some((item) => item.shot.id === s.id) ? 'danger' : 'muted'}`}>
+                        {t('白模预演参考：')}{isPrevisCurrent(p, s) ? `${t('当前版本')} · ${s.previsMediaId?.slice(0, 8)}` : t('需重新导出')}
+                      </span>}
                     </span>
-                    <small className={required > 10 && required > s.duration ? 'danger' : ''}>
-                      {s.duration}s{required > s.duration ? ` → ${required}s` : ''}
+                    <small className={timing.issue ? 'danger' : ''}>
+                      {s.duration}s{timing.issue ? ` · ${t('超限')}` : timing.duration > s.duration ? ` → ${timing.duration}s` : ''}
                     </small>
                   </label>
                 })}
               </div>
+              {batch.length > 100 && <p className="small danger" role="alert">{t('单批最多生成 100 个镜头，请减少选择。')}</p>}
+              {!!previsIssues.length && <p className="small danger" role="alert">{t('已启用预演参考的镜头需要当前版本白模视频、相同生成时长及 RunningHub H3 Ref2VA。请调整后重新导出，或关闭该镜头的预演参考。')}</p>}
+              {batchTiming.some(({ shot }) => shot.usePrevis) && <p className="small muted">{t('H3 参考视频合计最多 15 秒；同时引用前镜时，预演最长 13 秒，前镜按剩余额度取真实尾部并保留音轨。')}</p>}
               {!!autoFit.length && <p className="small batch-timing-note" role="status">
-                {t('确认生成时会自动延长 {count} 个镜头，给对白留足时间；时长增加可能提高生成费用。')
+                {t('确认生成时会自动延长 {count} 个镜头，按对白估算或模型要求补足时长；时长增加可能提高生成费用。')
                   .replace('{count}', String(autoFit.length))}
               </p>}
               {!!needsSplit.length && <div className="batch-timing-alert" role="alert">
-                <p className="small danger">
-                  {needsSplit[0].shot.title}{t('的对白约需 {duration} 秒；请先拆分对白或手动延长镜头。')
-                    .replace('{duration}', String(needsSplit[0].required))}
-                </p>
-                <Button onClick={() => { setSelected(needsSplit[0].shot.id); setInspector(true); setBatch(null) }}>
-                  {t('编辑这个镜头')}
+                <p className="small danger">{t('{count} 个镜头超过当前模型的 {maximum} 秒上限，请拆分后生成。')
+                  .replace('{count}', String(needsSplit.length)).replace('{maximum}', String(videoLimits.maximum))}</p>
+                <div className="batch-timing-issues">
+                  {needsSplit.map(({ shot, required, issue }) => <div key={shot.id} className="batch-timing-issue">
+                    <div><strong>{shot.title}</strong><span className="small muted">
+                      {t(issue === 'dialogue' ? '对白估算约 {duration} 秒' : '镜头设置为 {duration} 秒')
+                        .replace('{duration}', String(issue === 'dialogue' ? required : shot.duration))}
+                    </span></div>
+                    <Button onClick={() => { setSelected(shot.id); setInspector(true); setBatch(null) }}>{t('编辑这个镜头')}</Button>
+                  </div>)}
+                </div>
+                <Button onClick={() => setBatch(batch.filter((id) => !needsSplit.some(({ shot }) => shot.id === id)))}>
+                  {t('取消选择超限镜头')}
                 </Button>
               </div>}
+              {!!dialogueIssues.length && <p className="small danger" role="alert">
+                {t('{count} 个镜头的台词设置需要修正，请展开核对。').replace('{count}', String(dialogueIssues.length))}
+              </p>}
+              <details className="dialogue-review" open={dialogueIssues.length ? true : undefined}>
+                <summary>{t('台词与读音核对')} · {batch.length} {t('镜头')}</summary>
+                <p className="small muted">{t('以下是提交给工作流的朗读清单；保留原文，不增删词。生成后仍需核对实际音轨。')}</p>
+                {!state.dialogueRulesReady && <p className="small muted">{t('台词规范更新需在当前任务结束后重启开发版。')}</p>}
+                <div className="batch-dialogue-list">
+                  {batchTiming.map(({ shot }) => <section key={shot.id}>
+                    <div className="row-between"><strong>{shot.title}</strong>
+                      <Button onClick={() => { setSelected(shot.id); setInspector(true); setBatch(null) }}>{t('编辑这个镜头')}</Button>
+                    </div>
+                    <DialoguePreview p={p} shot={shot} />
+                  </section>)}
+                </div>
+              </details>
               <label className="check-label">
                 <input type="checkbox" checked={stop} onChange={(e) => setStop(e.target.checked)} />
                 {t('一个镜头失败时暂停同组尚未提交的镜头')}
@@ -1024,18 +1083,23 @@ function App() {
                 {t('· 并发')} 1{' '}
                 {t('· 当前选择')} {batch.length} {t('镜头')}
               </p>
-              <p className="small muted">
-                {t('局部重生成自动接回保留镜头：首帧取同场景前镜尾帧，尾帧取同场景后镜首帧；相邻镜头也在本批时按新视频串行衔接，不使用被替换的旧视频。缺少相邻视频的一侧不添加自动首尾帧。')}
-              </p>
-              <p className="small muted">
-                {t(state.config.models.video.provider === 'runninghub' ? '按导演台镜头顺序逐个生成；同场景使用上一镜尾帧和视频衔接，有音轨时参考音色与环境声。每镜最多使用 9 张人物、场景、道具参考图。' :
-                  '按镜头顺序生成，同场景继承上一镜实际尾帧作为首帧。此接口不继承音轨或多参考图。')}
-                {state.config.models.video.provider === 'minimax' && <span> {t('海螺输出无对白音轨，配音请导入镜头音频。')}</span>}
-                {state.config.models.video.provider === 'minimax' && <span> {t('当前海螺接口不支持尾帧衔接；需要接回后镜头时请选择 RunningHub 或可灵。')}</span>}
-              </p>
-              <p className="small muted">
-                {t('生成规范：人物与环境稳定、动作连续、音色一致、对白准确且声音清晰。生成后请逐镜检查。')}
-              </p>
+              {state.config.models.video.provider === 'minimax' && <p className="small muted">
+                {t('海螺输出无对白音轨，配音请导入镜头音频。')}{' '}
+                {t('当前海螺接口不支持尾帧衔接；需要接回后镜头时请选择 RunningHub 或可灵。')}
+              </p>}
+              <details className="batch-generation-details">
+                <summary>{t('生成与衔接说明')}</summary>
+                <p className="small muted">
+                  {t('局部重生成自动接回保留镜头：首帧取同场景前镜尾帧，尾帧取同场景后镜首帧；相邻镜头也在本批时按新视频串行衔接，不使用被替换的旧视频。缺少相邻视频的一侧不添加自动首尾帧。')}
+                </p>
+                <p className="small muted">
+                  {t(state.config.models.video.provider === 'runninghub' ? '按导演台镜头顺序逐个生成；同场景使用上一镜尾帧和视频衔接，有音轨时参考音色与环境声。每镜最多使用 9 张人物、场景、道具参考图。' :
+                    '按镜头顺序生成，同场景继承上一镜实际尾帧作为首帧。此接口不继承音轨或多参考图。')}
+                </p>
+                <p className="small muted">
+                  {t('生成规范：人物与环境稳定、动作连续、音色一致、对白准确且声音清晰。生成后请逐镜检查。')}
+                </p>
+              </details>
               {!videoKeyReady && (
                 <Button onClick={() => setSettings(true)}>{t('先配置视频模型 Key')}</Button>
               )}
@@ -1061,7 +1125,7 @@ function App() {
               </Button>
               <Button
                 primary
-                disabled={!batch.length || !videoKeyReady || !!needsSplit.length}
+                disabled={!batch.length || batch.length > 100 || !videoKeyReady || !!needsSplit.length || !!dialogueIssues.length || !!previsIssues.length}
                 onClick={async () => {
                   setError('')
                   const r = await run({

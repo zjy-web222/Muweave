@@ -62,6 +62,12 @@ try {
   } })
   assert.match(refused.error.message, /confirmed:true/)
   assert.equal((await tool('read', {})).jobs.length, 0)
+  const stopRefused = await rpc('tools/call', { name: 'muweave_generate', arguments: { command: { type: 'terminateTasks' } } })
+  assert.match(stopRefused.error.message, /confirmed:true/)
+  await tool('edit', { command: { type: 'batchShots', projectId: project.id, episodeId,
+    shotIds: full.shots.slice(1).map((shot) => shot.id), patch: { lighting: '插件批量光线' } } })
+  full = (await tool('read', { projectId: project.id })).project
+  assert(full.shots.slice(1).every((shot) => shot.lighting === '插件批量光线'))
 
   process.env.DIRECTOR_DATA_DIR = data
   const serviceModule = await import('../src/plugin/service/muweave.mjs')
@@ -109,6 +115,18 @@ try {
   await page.locator('.shot-list article').first().waitFor()
   await page.locator('.brand-mark img').evaluate((image) => image.decode())
   await page.screenshot({ path: join(evidence, 'plugin-01-studio.png') })
+  await page.getByRole('button', { name: '3D 预演', exact: true }).click()
+  const previs = page.getByRole('region', { name: '3D 预演台', exact: true })
+  await previs.locator('canvas').waitFor()
+  await page.waitForFunction(() => [...document.querySelectorAll('.previs button')].some((button) => button.textContent.includes('导出构图图') && !button.disabled))
+  await previs.getByRole('button', { name: '导出构图图', exact: true }).click()
+  await page.getByText('构图图已保存到镜头素材', { exact: true }).waitFor()
+  await page.screenshot({ path: join(evidence, 'plugin-01-previs.png') })
+  await page.setViewportSize({ width: 640, height: 900 })
+  await page.screenshot({ path: join(evidence, 'plugin-01-previs-640.png') })
+  assert(await previs.evaluate((element) => element.scrollWidth <= element.clientWidth))
+  await page.setViewportSize({ width: 1440, height: 950 })
+  await page.getByRole('button', { name: '列表', exact: true }).click()
   await page.getByRole('button', { name: /^剧本(?: 01)?$/ }).click()
   await page.getByLabel('剧本正文').fill('插件测试：人物从河岸连续走到桥下。')
   await page.getByRole('button', { name: '保存剧本', exact: true }).click()
@@ -564,6 +582,17 @@ try {
     throw error
   }
   await host.screenshot({ path: join(evidence, 'plugin-05-mcp-app.png') })
+  await studio.getByRole('button', { name: '镜头', exact: true }).click()
+  try { await studio.locator('.shot-list article').first().waitFor() }
+  catch (error) { console.error('MCP previs errors:', errors, await studio.locator('body').innerText()); await host.screenshot({ path: join(evidence, 'plugin-error-mcp-previs.png') }); throw error }
+  await studio.getByRole('button', { name: '3D 预演', exact: true }).click()
+  await studio.locator('.previs canvas').waitFor()
+  await studio.getByRole('button', { name: '导出构图图', exact: true }).click()
+  await studio.getByText('构图图已保存到镜头素材', { exact: true }).waitFor()
+  await host.screenshot({ path: join(evidence, 'plugin-05-mcp-previs.png') })
+  await studio.getByRole('button', { name: 'EN', exact: true }).click()
+  await studio.getByRole('region', { name: '3D previs studio', exact: true }).waitFor()
+  await host.screenshot({ path: join(evidence, 'plugin-05-mcp-previs-en.png') })
   assert.deepEqual(failedRequests, [])
   assert.deepEqual(errors, [])
   console.log('PASS: authenticated runtime, MCP stdio, shared AI FIFO queue, queued cancellation, chat tab persistence, background storyboard import, saved attachments, stale script protection, preset/custom script polishing, empty polish failure/manual retry, skip persistence, reference image versioning, imports, exports, responsive Studio and MCP Apps UI. No paid jobs submitted.')

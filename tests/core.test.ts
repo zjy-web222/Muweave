@@ -28,6 +28,7 @@ import {
   projectSchema,
   type Job,
 } from '../src/shared/schema'
+import { defaultModel } from '../src/shared/models'
 import directorRef2vaGraph from './fixtures/director-ref2va-api.json'
 
 let root: string, store: Store
@@ -77,6 +78,11 @@ describe('local project state', () => {
     const { instanceType: _instanceType, ...legacy } = defaultConfig
     store.set('config', legacy)
     expect(store.config().instanceType).toBe('plus')
+  })
+  it('keeps legacy settings at standard resolution', () => {
+    const { videoResolution: _videoResolution, ...legacy } = defaultConfig
+    store.set('config', legacy)
+    expect(store.config().videoResolution).toBe('480p')
   })
   it('uses the selected language for new project and shot defaults', () => {
     const project = createProject('My film', '16:9', false, 'en')
@@ -534,6 +540,7 @@ describe('safe paid-job lifecycle', () => {
       site: videoWorkflow.site,
       workflowId: videoWorkflow.id,
       instanceType: 'plus',
+      videoResolution: '480p',
       aspect: '16:9',
       mappings: [],
     })
@@ -565,6 +572,50 @@ describe('safe paid-job lifecycle', () => {
     expect(result['18']).toMatchObject({ class_type: 'LoadImage', inputs: { image: 'first.png' } })
     expect(source['17'].inputs.prompt).toBe('old')
     expect(() => prepareVideoWorkflow({}, shot, '16:9')).toThrow('视频节点已变化')
+  })
+  it.each([
+    ['16:9', 1344, 768], ['9:16', 768, 1344], ['1:1', 1024, 1024],
+  ] as const)('uses native HD dimensions for %s with and without image references', (aspect, width, height) => {
+    const shot = { ...blankShot('episode'), action: 'Continue the scene', duration: 5 }
+    const source = structuredClone(directorRef2vaGraph)
+    const graph = prepareVideoWorkflow(source, shot, aspect,
+      { references: ['character.png'], video: 'previous.mp4', videoHasAudio: true }, undefined, '768p')
+    expect(graph['12'].inputs).toMatchObject({ width, height, duration_seconds: 5 })
+    expect(Object.values(graph).find((node) => node.class_type === 'RHMiniMaxH3Ref2VAVideoReference')?.inputs.reference_type)
+      .toBe('video_audio')
+    expect(Object.values(graph).find((node) => node.class_type === 'LoadVideo')?.inputs)
+      .toMatchObject({ keep_audio: true, trim_time: 0 })
+    const fallback = prepareVideoWorkflow(source, shot, aspect, {}, undefined, '768p')
+    expect(fallback['17'].inputs).toMatchObject({ width, height })
+    expect(source).toEqual(directorRef2vaGraph)
+  })
+  it.each([
+    ['768p', false, '480p', 1344, 768],
+    ['480p', true, '768p', 864, 480],
+  ] as const)('submits frozen %s dimensions, including legacy task: %s', async (quality, legacy, current, width, height) => {
+    const p = store.save(createProject('frozen resolution', '16:9', true))
+    store.set('config', { ...defaultConfig, videoResolution: quality, paused: true })
+    const api = {
+      workflow: vi.fn().mockResolvedValue(directorRef2vaGraph),
+      start: vi.fn().mockResolvedValue('local-resolution-test'),
+    } as unknown as RunningHub
+    const queue = new Queue(store, api, () => {})
+    queue.enqueue(p.id, [p.shots[0].id], false)
+    const job = store.jobs()[0]
+    expect(job.videoResolution).toBe(quality)
+    if (legacy) {
+      delete job.videoResolution
+      store.saveJob(job)
+    }
+    p.aspect = '9:16'
+    store.save(p)
+    store.set('config', { ...defaultConfig, videoResolution: current, paused: false })
+    queue.start()
+    try {
+      await vi.waitFor(() => expect(api.start).toHaveBeenCalledTimes(1))
+      expect(vi.mocked(api.start).mock.calls[0][2]?.['17'].inputs).toMatchObject({ width, height })
+      expect(store.jobs()[0].videoResolution).toBe(legacy ? undefined : quality)
+    } finally { queue.stop() }
   })
   it('rebuilds the Ref2VA chain from distinct images and the previous video', () => {
     const shot = { ...blankShot('episode'), videoPrompt: 'Continue along the river', duration: 5, seed: 83 }
@@ -809,6 +860,36 @@ describe('safe paid-job lifecycle', () => {
     expect(queue.enqueue(p.id, p.shots.slice(0, 2).map((shot) => shot.id), false)).toBe(2)
     expect(store.jobs()).toHaveLength(2)
     expect(store.jobs().map((job) => job.snapshot.duration).sort()).toEqual([4, 5])
+  })
+  it.each(['runninghub', 'doubao', 'xai'] as const)('queues 11–15 second dialogue with exact saved text for %s', (provider) => {
+    const p = createProject('longer supported dialogue', '16:9', true)
+    const dialogue = '字'.repeat(33)
+    p.shots[0].duration = 10
+    p.shots[0].dialogue = dialogue
+    p.shots[1].duration = 10
+    p.shots[1].dialogue = '字'.repeat(49)
+    store.save(p)
+    store.set('config', { ...defaultConfig, paused: true,
+      models: { ...defaultConfig.models, video: defaultModel('video', provider) } })
+    const queue = new Queue(store, {} as RunningHub, () => {})
+    expect(queue.enqueue(p.id, p.shots.slice(0, 2).map((shot) => shot.id), false)).toBe(2)
+    expect(store.project(p.id).shots.slice(0, 2).map((shot) => shot.duration)).toEqual([11, 15])
+    const job = store.jobs().find((job) => job.shotId === p.shots[0].id)!
+    expect(job.snapshot).toMatchObject({ duration: 11, dialogue, action: p.shots[0].action })
+    expect(job.model?.provider).toBe(provider)
+  })
+  it('rejects an oversized manual duration atomically without changing valid shots', () => {
+    const p = createProject('manual oversized shot', '16:9', true)
+    p.shots[0].duration = 10
+    p.shots[0].dialogue = '字'.repeat(33)
+    p.shots[1].duration = 16
+    p.shots[1].dialogue = ''
+    store.save(p)
+    store.set('config', { ...defaultConfig, paused: true })
+    const queue = new Queue(store, {} as RunningHub, () => {})
+    expect(() => queue.enqueue(p.id, p.shots.slice(0, 2).map((shot) => shot.id), false)).toThrow('15 秒上限')
+    expect(store.project(p.id).shots[0].duration).toBe(10)
+    expect(store.jobs()).toHaveLength(0)
   })
   it('waits for a regenerated previous shot before submitting the next shot', async () => {
     const p = store.save(createProject('regeneration order', '16:9', true))

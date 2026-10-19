@@ -1,18 +1,20 @@
 import { z } from 'zod'
+import { previsSceneSchema, previsPlanSchema, previsSourceSchema } from './previs'
 import { defaultModels, modelsSchema, modelSelectionSchema, modelChannelSchema } from './models'
 
 export const id = z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/)
 const text = z.string().max(200000)
 export const mediaSchema = z.object({
   id,
-  kind: z.enum(['image', 'video', 'audio', 'export']),
+  kind: z.enum(['image', 'video', 'audio', 'export', 'model']),
   name: z.string().max(200),
   file: z.string().max(500),
-  slot: z.enum(['first', 'last', 'video', 'audio', 'reference', 'export']),
+  slot: z.enum(['first', 'last', 'video', 'audio', 'reference', 'export', 'previs', 'composition', 'model']),
   ownerId: id,
   prompt: text.default(''),
   createdAt: z.string(),
   taskId: z.string().optional(),
+  previsSource: previsSourceSchema.optional(),
 })
 export type Media = z.infer<typeof mediaSchema>
 export const assetSchema = z.object({
@@ -32,6 +34,7 @@ export const shotSchema = z.object({
   action: text,
   dialogue: text,
   speaker: z.string().max(200).default(''),
+  pronunciationNotes: z.string().max(2000).optional(),
   imagePrompt: text,
   videoPrompt: text,
   size: z.string().max(100).default('中景'),
@@ -44,10 +47,22 @@ export const shotSchema = z.object({
   lastMediaId: id.optional(),
   videoMediaId: id.optional(),
   audioMediaId: id.optional(),
+  previs: previsPlanSchema.optional(),
+  previsMediaId: id.optional(),
+  usePrevis: z.boolean().optional(),
   approved: z.boolean().default(false),
   stale: z.boolean().default(false),
 })
 export type Shot = z.infer<typeof shotSchema>
+export const shotBatchPatchSchema = z.object({
+  scene: shotSchema.shape.scene.removeDefault().optional(),
+  size: shotSchema.shape.size.removeDefault().optional(),
+  camera: shotSchema.shape.camera.removeDefault().optional(),
+  lighting: shotSchema.shape.lighting.removeDefault().optional(),
+  duration: shotSchema.shape.duration.optional(),
+  assetIds: shotSchema.shape.assetIds.removeDefault().optional(),
+}).strict().refine((patch) => Object.values(patch).some((value) => value !== undefined), '请选择需要应用的参数')
+export type ShotBatchPatch = z.infer<typeof shotBatchPatchSchema>
 export const scriptArchiveSchema = z.object({
   id,
   episodeId: id,
@@ -108,6 +123,7 @@ export const projectSchema = z.object({
   shots: z.array(shotSchema).max(2000),
   scriptArchives: z.array(scriptArchiveSchema).default([]),
   assets: z.array(assetSchema).max(1000),
+  previsScenes: z.array(previsSceneSchema).max(200).optional(),
   media: z.array(mediaSchema).max(10000),
   groups: z
     .array(
@@ -140,11 +156,18 @@ export const videoWorkflow = {
   id: '2105215916815511553',
   instanceType: 'plus',
 } as const
+export const videoResolutionSchema = z.enum(['480p', '768p'])
+export type VideoResolution = z.infer<typeof videoResolutionSchema>
+export const videoSizes = {
+  '480p': { '16:9': [864, 480], '9:16': [480, 864], '1:1': [640, 640] },
+  '768p': { '16:9': [1344, 768], '9:16': [768, 1344], '1:1': [1024, 1024] },
+} as const
 export const configSchema = z.object({
   site: z.enum(['https://www.runninghub.ai', 'https://www.runninghub.cn']),
   workflowId: z.string().regex(/^\d*$/).max(100),
   mappings: z.array(mappingSchema).max(100),
   instanceType: z.enum(['default', 'plus']).default('plus'),
+  videoResolution: videoResolutionSchema.default('480p'),
   concurrency: z.number().int().min(1).max(4),
   ffmpeg: z.string().max(1000),
   theme: z.enum(['light', 'dark']),
@@ -158,6 +181,7 @@ export const defaultConfig: Config = {
   workflowId: videoWorkflow.id,
   mappings: [],
   instanceType: videoWorkflow.instanceType,
+  videoResolution: '480p',
   concurrency: 1,
   ffmpeg: 'ffmpeg',
   theme: 'light',
@@ -186,6 +210,7 @@ export const jobSchema = z.object({
   site: z.string(),
   workflowId: z.string(),
   instanceType: z.enum(['default', 'plus']).optional(),
+  videoResolution: videoResolutionSchema.optional(),
   previousShotId: id.optional(),
   previousVideoMediaId: id.optional(),
   nextShotId: id.optional(),
@@ -198,10 +223,14 @@ export const jobSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   error: z.string().optional(),
+  scheduledAt: z.string().optional(),
+  cancelRequested: z.boolean().optional(),
   pollErrors: z.number().default(0),
   outputs: z.array(z.string()).default([]),
   model: modelSelectionSchema.optional(),
   remoteKind: z.enum(['text2video', 'image2video']).optional(),
+  previsMediaId: id.optional(),
+  previsSubjects: z.array(z.object({ name: z.string().max(200), color: z.string().regex(/^#[0-9a-fA-F]{6}$/) })).max(100).optional(),
 })
 export type Job = z.infer<typeof jobSchema>
 export const aiRequestSchema = z.discriminatedUnion('type', [
@@ -223,6 +252,7 @@ export const aiTaskSchema = z.object({
   attachments: z.array(chatAttachmentSchema).max(10).default([]),
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled']),
   createdAt: z.string(), updatedAt: z.string(), startedAt: z.string().optional(),
+  scheduledAt: z.string().optional(), cancelRequested: z.boolean().optional(),
   error: z.string().max(2500).optional(), resultText: text.optional(),
   message: z.string().optional(),
   model: modelSelectionSchema.optional(),
@@ -242,6 +272,8 @@ export const snapshotSchema = z.object({
   exporting: z.boolean(),
   credentials: z.record(z.string(), z.boolean()).default({}),
   modelServicesReady: z.boolean().default(false),
+  videoResolutionReady: z.boolean().default(false),
+  dialogueRulesReady: z.boolean().default(false),
 })
 export type Snapshot = z.infer<typeof snapshotSchema>
 export const replySchema = z.discriminatedUnion('ok', [
@@ -290,6 +322,12 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('codexStatus') }),
   z.object({ type: z.literal('codexLogin') }),
   z.object({ type: z.literal('shot'), ...pid, shot: shotSchema }),
+  z.object({ type: z.literal('savePrevis'), ...pid, shotId: id, scene: previsSceneSchema, plan: previsPlanSchema }),
+  z.object({ type: z.literal('previsOutput'), ...pid, shotId: id, action: z.enum(['start', 'finish', 'cancel']),
+    sessionId: z.string().uuid().optional(), format: z.enum(['image', 'video']).optional(), time: z.number().min(0).max(120).optional() }),
+  z.object({ type: z.literal('batchShots'), ...pid, episodeId: id,
+    shotIds: z.array(id).min(1).max(2000), patch: shotBatchPatchSchema,
+    assetMode: z.enum(['merge', 'replace']).default('merge') }),
   z.object({ type: z.literal('deleteShot'), ...pid, shotId: id }),
   z.object({ type: z.literal('reorder'), ...pid, shotId: id, delta: z.enum(['up', 'down']) }),
   z.object({ type: z.literal('asset'), ...pid, asset: assetSchema }),
@@ -350,6 +388,8 @@ export const commandSchema = z.discriminatedUnion('type', [
     taskId: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(),
   }),
   z.object({ type: z.literal('pause'), paused: z.boolean() }),
+  z.object({ type: z.literal('terminateTasks') }),
+  z.object({ type: z.literal('deleteTask'), taskId: id }),
   z.object({ type: z.literal('exportArchive'), ...pid }),
   z.object({ type: z.literal('importArchive') }),
   z.object({
@@ -369,6 +409,7 @@ export const commandSchema = z.discriminatedUnion('type', [
 export type Command = z.infer<typeof commandSchema>
 export interface Bridge {
   command(command: Command): Promise<Reply>
+  previsFrame?(sessionId: string, index: number, data: ArrayBuffer): Promise<void>
   onChange(listener: () => void): () => void
   studio?: boolean
   mediaUrl?(url: string): string
@@ -379,9 +420,18 @@ declare global {
   }
 }
 
+export function randomId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  // MCP Apps may run in an opaque iframe where randomUUID requires a secure context.
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 15) | 64
+  bytes[8] = (bytes[8] & 63) | 128
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 export function blankShot(episodeId: string, locale: Config['locale'] = 'zh'): Shot {
   return shotSchema.parse({
-    id: crypto.randomUUID(),
+    id: randomId(),
     episodeId,
     title: locale === 'en' ? 'New shot' : '新镜头',
     action: '',
